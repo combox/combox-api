@@ -1,0 +1,14 @@
+dist/
+coverage/
+node_modules/
+*.tsbuildinfo
+yarn-error.log
+
+.env
+.env.local
+.env.*.local
+
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
