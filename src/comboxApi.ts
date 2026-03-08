@@ -3,6 +3,7 @@ export type {
   AuthTokens,
   ProfileUpdateInput,
   ChatItem,
+  ChatInviteLink,
   ChatMember,
   ChatMemberProfile,
   MessageReaction,
@@ -34,12 +35,12 @@ import type {
   AuthTokens,
   ProfileUpdateInput,
   ChatItem,
+  ChatInviteLink,
   ChatMember,
   MessageReaction,
   SearchResults,
   GIFItem,
   MessageItem,
-  E2EEnvelope,
   MessageStatus,
   MediaAttachment,
   MediaSession,
@@ -55,6 +56,13 @@ type AuthSnapshot = {
   user: AuthUser
   tokens: AuthTokens
 }
+
+const API_ENV = (import.meta as ImportMeta & {
+  env?: {
+    VITE_API_BASE_URL?: string
+    VITE_WS_BASE_URL?: string
+  }
+}).env
 
 const AUTH_STORAGE_KEY = 'combox.auth.v1'
 const PROFILE_STORAGE_KEY = 'combox.profile.v1'
@@ -78,8 +86,8 @@ function inferDefaultWSBase(): string {
   return ''
 }
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? inferDefaultAPIBase()
-const WS_BASE = (import.meta.env.VITE_WS_BASE_URL as string | undefined) ?? inferDefaultWSBase()
+const API_BASE = API_ENV?.VITE_API_BASE_URL ?? inferDefaultAPIBase()
+const WS_BASE = API_ENV?.VITE_WS_BASE_URL ?? inferDefaultWSBase()
 
 let refreshPromise: Promise<AuthTokens | null> | null = null
 
@@ -565,6 +573,12 @@ export async function listChats(): Promise<ChatItem[]> {
   return Array.isArray(payload.items) ? payload.items : []
 }
 
+export async function getChat(chatID: string): Promise<ChatItem> {
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/chats/${chatID}`)
+  if (!payload.chat) throw new ApiError('get_chat_failed', 'Get chat failed')
+  return payload.chat
+}
+
 export async function createChat(input: { title: string; member_ids: string[]; type?: string }): Promise<{ chat: ChatItem }> {
   const payload = await apiRequest<{ chat?: ChatItem }>(`/chats`, {
     method: 'POST',
@@ -576,7 +590,14 @@ export async function createChat(input: { title: string; member_ids: string[]; t
 
 export async function updateChat(
   chatID: string,
-  input: { title?: string; avatar_data_url?: string | null; avatar_gradient?: string | null },
+  input: {
+    title?: string
+    avatar_data_url?: string | null
+    avatar_gradient?: string | null
+    comments_enabled?: boolean
+    is_public?: boolean
+    public_slug?: string | null
+  },
 ): Promise<{ chat: ChatItem }> {
   const payload = await apiRequest<{ chat?: ChatItem }>(`/chats/${chatID}`, {
     method: 'PATCH',
@@ -586,13 +607,36 @@ export async function updateChat(
   return { chat: payload.chat }
 }
 
+export async function listChatInviteLinks(chatID: string): Promise<ChatInviteLink[]> {
+  const payload = await apiRequest<{ items?: ChatInviteLink[] }>(`/chats/${chatID}/invite-links`)
+  return Array.isArray(payload.items) ? payload.items : []
+}
+
+export async function createChatInviteLink(chatID: string, input?: { title?: string }): Promise<ChatInviteLink> {
+  const payload = await apiRequest<{ item?: ChatInviteLink }>(`/chats/${chatID}/invite-links`, {
+    method: 'POST',
+    body: { title: input?.title || '' },
+  })
+  if (!payload.item) throw new ApiError('create_invite_link_failed', 'Create invite link failed')
+  return payload.item
+}
+
+export async function acceptChannelInviteLink(token: string): Promise<{ chat: ChatItem }> {
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/chats/invite-links/${encodeURIComponent(token)}/accept`, {
+    method: 'POST',
+  })
+  if (!payload.chat) throw new ApiError('accept_invite_link_failed', 'Accept invite link failed')
+  return { chat: payload.chat }
+}
+
 export async function listChannels(groupChatID: string): Promise<ChatItem[]> {
   const payload = await apiRequest<{ items?: ChatItem[] }>(`/chats/${groupChatID}/channels`)
   return Array.isArray(payload.items) ? payload.items : []
 }
 
-export async function listChatMembers(chatID: string): Promise<ChatMember[]> {
-  const payload = await apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members`)
+export async function listChatMembers(chatID: string, options?: { include_banned?: boolean }): Promise<ChatMember[]> {
+  const suffix = options?.include_banned ? '?include_banned=1' : ''
+  const payload = await apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members${suffix}`)
   return Array.isArray(payload.items) ? payload.items : []
 }
 
@@ -618,7 +662,7 @@ export async function leaveChat(chatID: string): Promise<void> {
   })
 }
 
-export async function updateChatMemberRole(chatID: string, userID: string, role: 'member' | 'moderator' | 'admin'): Promise<ChatMember[]> {
+export async function updateChatMemberRole(chatID: string, userID: string, role: 'member' | 'moderator' | 'admin' | 'subscriber' | 'banned'): Promise<ChatMember[]> {
   const payload = await apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members/${userID}`, {
     method: 'PATCH',
     body: { role },
@@ -643,6 +687,33 @@ export async function createChannel(groupChatID: string, input: { title: string;
   })
   if (!payload.chat) throw new ApiError('create_channel_failed', 'Create channel failed')
   return { chat: payload.chat }
+}
+
+export async function createPublicChannel(input: { title: string; public_slug?: string; is_public?: boolean }): Promise<{ chat: ChatItem }> {
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/public-channels`, {
+    method: 'POST',
+    body: {
+      title: input.title,
+      public_slug: input.public_slug,
+      is_public: input.is_public ?? true,
+    },
+  })
+  if (!payload.chat) throw new ApiError('create_public_channel_failed', 'Create public channel failed')
+  return { chat: payload.chat }
+}
+
+export async function subscribePublicChannel(chatID: string): Promise<{ chat: ChatItem }> {
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/public-channels/${chatID}/subscribe`, {
+    method: 'POST',
+  })
+  if (!payload.chat) throw new ApiError('subscribe_public_channel_failed', 'Subscribe public channel failed')
+  return { chat: payload.chat }
+}
+
+export async function unsubscribePublicChannel(chatID: string): Promise<void> {
+  await apiRequest(`/public-channels/${chatID}/unsubscribe`, {
+    method: 'POST',
+  })
 }
 
 export async function deleteChannel(groupChatID: string, channelChatID: string): Promise<void> {
@@ -670,6 +741,15 @@ export async function sendDirectMessage(input: {
     throw new ApiError('send_failed', 'Send failed')
   }
   return { item: payload.item, chat: payload.chat }
+}
+
+export async function openDirectChat(input: { recipient_user_id: string }): Promise<{ chat: ChatItem }> {
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/chats/direct`, {
+    method: 'POST',
+    body: { recipient_user_id: input.recipient_user_id },
+  })
+  if (!payload.chat) throw new ApiError('open_direct_chat_failed', 'Open direct chat failed')
+  return { chat: payload.chat }
 }
 
 export async function searchDirectory(input: { q: string; scope?: 'all' | 'users' | 'chats'; limit?: number }): Promise<SearchResults> {
@@ -741,6 +821,24 @@ export async function sendMessage(chatID: string, content: string, attachmentIDs
 
 export async function deleteMessage(messageID: string): Promise<void> {
   await apiRequest(`/messages/${messageID}`, { method: 'DELETE' })
+}
+
+export async function editMessageByID(messageID: string, content: string, attachmentIDs: string[] = []): Promise<MessageItem> {
+  const payload = await apiRequest<{ item?: MessageItem }>(`/messages/${messageID}`, {
+    method: 'PATCH',
+    body: { content, attachment_ids: attachmentIDs },
+  })
+  if (!payload.item) throw new ApiError('update_failed', 'Update failed')
+  return payload.item
+}
+
+export async function editMessage(chatID: string, messageID: string, content: string, attachmentIDs: string[] = []): Promise<MessageItem> {
+  const payload = await apiRequest<{ item?: MessageItem }>(`/chats/${chatID}/messages/${messageID}`, {
+    method: 'PATCH',
+    body: { content, attachment_ids: attachmentIDs },
+  })
+  if (!payload.item) throw new ApiError('update_failed', 'Update failed')
+  return payload.item
 }
 
 export async function upsertMessageStatus(chatID: string, messageID: string, status: 'delivered' | 'read'): Promise<MessageStatus> {

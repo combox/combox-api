@@ -3,6 +3,7 @@ import {
   type AuthTokens,
   type AuthUser,
   type ChatItem,
+  type ChatInviteLink,
   type ChatMember,
   type LocalProfile,
   type MediaAttachment,
@@ -38,11 +39,9 @@ import {
 import {
   normalizeChatItem,
   normalizeMediaAttachment,
-  normalizeMediaSession,
   normalizeMessageItem,
   type NormalizedChatItem,
   type NormalizedMediaAttachment,
-  type NormalizedMediaSession,
   type NormalizedMessageItem,
 } from './normalized'
 
@@ -66,6 +65,13 @@ type AuthSnapshot = {
   user: AuthUser
   tokens: AuthTokens
 }
+
+const CLIENT_ENV = (import.meta as ImportMeta & {
+  env?: {
+    VITE_API_BASE_URL?: string
+    VITE_WS_BASE_URL?: string
+  }
+}).env
 
 function inferDefaultAPIBase(): string {
   if (typeof window === 'undefined') return '/api/private/v1'
@@ -126,8 +132,8 @@ export class ComboxClient {
   private refreshPromise: Promise<AuthTokens | null> | null = null
 
   constructor(config: ComboxClientConfig = {}) {
-    this.baseUrl = config.baseUrl ?? (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? inferDefaultAPIBase()
-    this.wsBase = config.wsBase ?? (import.meta.env.VITE_WS_BASE_URL as string | undefined) ?? inferDefaultWSBase()
+    this.baseUrl = config.baseUrl ?? CLIENT_ENV?.VITE_API_BASE_URL ?? inferDefaultAPIBase()
+    this.wsBase = config.wsBase ?? CLIENT_ENV?.VITE_WS_BASE_URL ?? inferDefaultWSBase()
     this.authStorage = config.authStorage ?? createBrowserAuthStorage()
     this.profileStorage = config.profileStorage ?? createBrowserProfileStorage()
     this.fetchImpl = config.fetchImpl ?? fetch
@@ -446,6 +452,12 @@ export class ComboxClient {
     return Array.isArray(payload.items) ? payload.items : []
   }
 
+  async getChat(chatID: string): Promise<ChatItem> {
+    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/chats/${chatID}`)
+    if (!payload.chat) throw new ApiError('get_chat_failed', 'Get chat failed')
+    return payload.chat
+  }
+
   async listChatsNormalized(): Promise<NormalizedChatItem[]> {
     const items = await this.listChats()
     return items.map(normalizeChatItem)
@@ -460,13 +472,33 @@ export class ComboxClient {
     return { chat: payload.chat }
   }
 
+  async updateChat(
+    chatID: string,
+    input: {
+      title?: string
+      avatar_data_url?: string | null
+      avatar_gradient?: string | null
+      comments_enabled?: boolean
+      is_public?: boolean
+      public_slug?: string | null
+    },
+  ): Promise<{ chat: ChatItem }> {
+    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/chats/${chatID}`, {
+      method: 'PATCH',
+      body: input,
+    })
+    if (!payload.chat) throw new ApiError('update_chat_failed', 'Update chat failed')
+    return { chat: payload.chat }
+  }
+
   async listChannels(groupChatID: string): Promise<ChatItem[]> {
     const payload = await this.apiRequest<{ items?: ChatItem[] }>(`/chats/${groupChatID}/channels`)
     return Array.isArray(payload.items) ? payload.items : []
   }
 
-  async listChatMembers(chatID: string): Promise<ChatMember[]> {
-    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members`)
+  async listChatMembers(chatID: string, options?: { include_banned?: boolean }): Promise<ChatMember[]> {
+    const suffix = options?.include_banned ? '?include_banned=1' : ''
+    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members${suffix}`)
     return Array.isArray(payload.items) ? payload.items : []
   }
 
@@ -478,7 +510,7 @@ export class ComboxClient {
     return Array.isArray(payload.items) ? payload.items : []
   }
 
-  async updateChatMemberRole(chatID: string, userID: string, role: 'member' | 'moderator' | 'admin'): Promise<ChatMember[]> {
+  async updateChatMemberRole(chatID: string, userID: string, role: 'member' | 'moderator' | 'admin' | 'subscriber' | 'banned'): Promise<ChatMember[]> {
     const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members/${userID}`, {
       method: 'PATCH',
       body: { role },
@@ -493,6 +525,28 @@ export class ComboxClient {
     return Array.isArray(payload.items) ? payload.items : []
   }
 
+  async listChatInviteLinks(chatID: string): Promise<ChatInviteLink[]> {
+    const payload = await this.apiRequest<{ items?: ChatInviteLink[] }>(`/chats/${chatID}/invite-links`)
+    return Array.isArray(payload.items) ? payload.items : []
+  }
+
+  async createChatInviteLink(chatID: string, input?: { title?: string }): Promise<ChatInviteLink> {
+    const payload = await this.apiRequest<{ item?: ChatInviteLink }>(`/chats/${chatID}/invite-links`, {
+      method: 'POST',
+      body: { title: input?.title || '' },
+    })
+    if (!payload.item) throw new ApiError('create_invite_link_failed', 'Create invite link failed')
+    return payload.item
+  }
+
+  async acceptChannelInviteLink(token: string): Promise<{ chat: ChatItem }> {
+    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/chats/invite-links/${encodeURIComponent(token)}/accept`, {
+      method: 'POST',
+    })
+    if (!payload.chat) throw new ApiError('accept_invite_link_failed', 'Accept invite link failed')
+    return { chat: payload.chat }
+  }
+
   async createChannel(groupChatID: string, input: { title: string; channel_type?: 'text' | 'voice' }): Promise<{ chat: ChatItem }> {
     const payload = await this.apiRequest<{ chat?: ChatItem }>(`/chats/${groupChatID}/channels`, {
       method: 'POST',
@@ -503,6 +557,33 @@ export class ComboxClient {
     })
     if (!payload.chat) throw new ApiError('create_channel_failed', 'Create channel failed')
     return { chat: payload.chat }
+  }
+
+  async createPublicChannel(input: { title: string; public_slug?: string; is_public?: boolean }): Promise<{ chat: ChatItem }> {
+    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/public-channels`, {
+      method: 'POST',
+      body: {
+        title: input.title,
+        public_slug: input.public_slug,
+        is_public: input.is_public ?? true,
+      },
+    })
+    if (!payload.chat) throw new ApiError('create_public_channel_failed', 'Create public channel failed')
+    return { chat: payload.chat }
+  }
+
+  async subscribePublicChannel(chatID: string): Promise<{ chat: ChatItem }> {
+    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/public-channels/${chatID}/subscribe`, {
+      method: 'POST',
+    })
+    if (!payload.chat) throw new ApiError('subscribe_public_channel_failed', 'Subscribe public channel failed')
+    return { chat: payload.chat }
+  }
+
+  async unsubscribePublicChannel(chatID: string): Promise<void> {
+    await this.apiRequest(`/public-channels/${chatID}/unsubscribe`, {
+      method: 'POST',
+    })
   }
 
   async sendDirectMessage(input: {
@@ -522,6 +603,15 @@ export class ComboxClient {
     })
     if (!payload.item || !payload.chat) throw new ApiError('send_failed', 'Send failed')
     return { item: payload.item, chat: payload.chat }
+  }
+
+  async openDirectChat(input: { recipient_user_id: string }): Promise<{ chat: ChatItem }> {
+    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/chats/direct`, {
+      method: 'POST',
+      body: { recipient_user_id: input.recipient_user_id },
+    })
+    if (!payload.chat) throw new ApiError('open_direct_chat_failed', 'Open direct chat failed')
+    return { chat: payload.chat }
   }
 
   async searchDirectory(input: { q: string; scope?: 'all' | 'users' | 'chats'; limit?: number }): Promise<SearchResults> {
@@ -629,19 +719,19 @@ export class ComboxClient {
     await this.apiRequest(`/messages/${messageID}`, { method: 'DELETE' })
   }
 
-  async editMessageByID(messageID: string, content: string): Promise<MessageItem> {
+  async editMessageByID(messageID: string, content: string, attachmentIDs: string[] = []): Promise<MessageItem> {
     const payload = await this.apiRequest<{ item?: MessageItem }>(`/messages/${messageID}`, {
       method: 'PATCH',
-      body: { content },
+      body: { content, attachment_ids: attachmentIDs },
     })
     if (!payload.item) throw new ApiError('update_failed', 'Update failed')
     return payload.item
   }
 
-  async editMessage(chatID: string, messageID: string, content: string): Promise<MessageItem> {
+  async editMessage(chatID: string, messageID: string, content: string, attachmentIDs: string[] = []): Promise<MessageItem> {
     const payload = await this.apiRequest<{ item?: MessageItem }>(`/chats/${chatID}/messages/${messageID}`, {
       method: 'PATCH',
-      body: { content },
+      body: { content, attachment_ids: attachmentIDs },
     })
     if (!payload.item) throw new ApiError('update_failed', 'Update failed')
     return payload.item
