@@ -45,7 +45,7 @@ jobs:
 
       - name: Verify release version matches package.json
         run: |
-          node -e "const pkg=require('./package.json'); const tag=process.env.RELEASE_TAG; if (`v${pkg.version}` !== tag) { console.error(`Release tag ${tag} does not match package.json version v${pkg.version}`); process.exit(1); }"
+          node -e "const pkg=require('./package.json'); const tag=process.env.RELEASE_TAG; const expected='v'+pkg.version; if (expected !== tag) { console.error('Release tag ' + tag + ' does not match package.json version ' + expected); process.exit(1); }"
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
 
