@@ -13,23 +13,25 @@ permissions:
   security-events: write
 
 jobs:
-  dependency-review:
-    if: github.event_name == 'pull_request'
+  npm-audit:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      pull-requests: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Dependency review
-        uses: actions/dependency-review-action@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          fail-on-severity: high
-          comment-summary-in-pr: always
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: npm audit
+        run: npm audit --audit-level=high
 
   codeql:
     runs-on: ubuntu-latest
