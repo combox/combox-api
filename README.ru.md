@@ -1,4 +1,4 @@
-# ComBox API
+# ComBox API SDK
 
 [English](./README.md) | [Русский](./README.ru.md)
 
@@ -36,14 +36,14 @@ import { ComboxClient, login, getProfile, connectRealtime } from 'combox-api'
 ```
 
 ## Сборка
-
 ```bash
 npm install
 npm run build
 ```
 
-Скрипты:
+## Скрипты
 
+- `npm run check` - TypeScript-проверка без генерации файлов
 - `npm run build` - компиляция TypeScript в `dist/`
 - `npm run prepare` - сборка на package prepare
 
@@ -65,13 +65,13 @@ npm run build
 
 Можно использовать прямые функции:
 
-- `login`
-- `register`
-- `getProfile`
-- `updateProfile`
-- `listChats`
-- `listMessages`
-- `createMessage`
+`login`
+`register`
+`getProfile`
+`updateProfile`
+`listChats`
+`listMessages`
+`createMessage`
 
 ### `ComboxClient`
 
@@ -113,11 +113,26 @@ npm run build
 Пакет экспортирует только `dist/`.
 
 ## Заметки
-
+-
 - пакет ориентирован на browser runtime
 - он предполагает наличие `window`, `localStorage`, `fetch` и браузерной семантики `WebSocket`, где это нужно
 - class API и functional API должны оставаться совместимыми по контракту
+-
+## Релизы
+
+- публикация автоматизирована через [release.yml](/C:/Users/Ernela/Projects/combox-api/.github/workflows/release.yml)
+- создай GitHub Release с тегом `vX.Y.Z`, который совпадает с версией в `package.json`
+- обычные релизы публикуются в npm с тегом `latest`
+- prerelease публикуются в npm с тегом `next`
+- в репозитории должен быть secret `NPM_TOKEN` с правом публикации пакета
 
 ## Лицензия
 
-Смотри лицензию репозитория, если она присутствует.
+<a href="./LICENSE">
+  <img src=".github/assets/mit-badge.png" width="70" alt="Лицензия MIT">
+</a>
+
+## Авторы
+
+[Ernela](https://github.com/Ernous) — разработчица;  
+[D7TUN6](https://github.com/D7TUN6) — идея, разработчик

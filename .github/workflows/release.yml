@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Validate npm token
+        run: |
+          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "Missing required secret: NPM_TOKEN"
+            echo "Create an npm access token with publish rights for the combox-api package."
+            exit 1
+          fi
+
+      - name: Install
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify release version matches package.json
+        run: |
+          node -e "const pkg=require('./package.json'); const tag=process.env.RELEASE_TAG; if (`v${pkg.version}` !== tag) { console.error(`Release tag ${tag} does not match package.json version v${pkg.version}`); process.exit(1); }"
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+      - name: Publish latest
+        if: github.event.release.prerelease == false
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish next
+        if: github.event.release.prerelease == true
+        run: npm publish --tag next
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

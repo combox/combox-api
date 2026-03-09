@@ -1,4 +1,4 @@
-# ComBox API
+# ComBox API SDK
 
 [English](./README.md) | [Русский](./README.ru.md)
 
@@ -44,6 +44,7 @@ npm run build
 
 Scripts:
 
+- `npm run check` - TypeScript type check without emitting files
 - `npm run build` - compile TypeScript into `dist/`
 - `npm run prepare` - build on package prepare
 
@@ -117,6 +118,14 @@ The package exports only `dist/`.
 - this package is browser-oriented
 - it assumes `window`, `localStorage`, and browser `fetch`/`WebSocket` semantics where relevant
 - client and functional APIs should stay contract-compatible
+
+## Releases
+
+- publishing is automated by [release.yml](/C:/Users/Ernela/Projects/combox-api/.github/workflows/release.yml)
+- create a GitHub Release with tag `vX.Y.Z` that matches `package.json`
+- stable releases publish to npm with the `latest` tag
+- prereleases publish to npm with the `next` tag
+- the repository must define an `NPM_TOKEN` secret with publish access for the package
 
 ## License
 

@@ -66,6 +66,12 @@ type AuthSnapshot = {
   tokens: AuthTokens
 }
 
+type RefreshResult =
+  | { kind: 'ok'; tokens: AuthTokens }
+  | { kind: 'missing' }
+  | { kind: 'invalid' }
+  | { kind: 'unavailable' }
+
 const CLIENT_ENV = (import.meta as ImportMeta & {
   env?: {
     VITE_API_BASE_URL?: string
@@ -129,7 +135,7 @@ export class ComboxClient {
   private readonly profileStorage: ProfileStorage
   private readonly fetchImpl: typeof fetch
   private readonly redirectToAuth: (nextUrl: string) => void
-  private refreshPromise: Promise<AuthTokens | null> | null = null
+  private refreshPromise: Promise<RefreshResult> | null = null
 
   constructor(config: ComboxClientConfig = {}) {
     this.baseUrl = config.baseUrl ?? CLIENT_ENV?.VITE_API_BASE_URL ?? inferDefaultAPIBase()
@@ -202,9 +208,9 @@ export class ComboxClient {
     return this.profileStorage.read()
   }
 
-  private async refreshAuthTokens(): Promise<AuthTokens | null> {
+  private async refreshAuthTokens(): Promise<RefreshResult> {
     const snapshot = this.readAuthSnapshot()
-    if (!snapshot?.tokens?.refresh_token) return null
+    if (!snapshot?.tokens?.refresh_token) return { kind: 'missing' }
 
     try {
       const response = await this.fetchImpl(this.authUrl('/auth/refresh'), {
@@ -214,15 +220,18 @@ export class ComboxClient {
       })
       const payload = await parseJson<{ tokens?: AuthTokens; message?: string; code?: string }>(response)
       if (!response.ok || !payload?.tokens) {
-        if (response.status === 401 || response.status === 403) this.clearAuth()
-        return null
+        if (response.status === 401 || response.status === 403) {
+          this.clearAuth()
+          return { kind: 'invalid' }
+        }
+        return { kind: 'unavailable' }
       }
 
       const next: AuthSnapshot = { user: snapshot.user, tokens: payload.tokens }
       this.writeAuthSnapshot(next)
-      return payload.tokens
+      return { kind: 'ok', tokens: payload.tokens }
     } catch {
-      return null
+      return { kind: 'unavailable' }
     }
   }
 
@@ -235,12 +244,15 @@ export class ComboxClient {
       })
     }
     const refreshed = await this.refreshPromise
-    return refreshed?.access_token ?? null
+    return refreshed.kind === 'ok' ? refreshed.tokens.access_token : null
   }
 
   private async apiRequest<T>(path: string, options?: ApiRequestOptions): Promise<T> {
     const token = options?.noAuth ? null : await this.getOrRefreshToken()
     if (!options?.noAuth && !token) {
+      if (this.readAuthSnapshot()?.tokens?.refresh_token) {
+        throw new ApiError('session_refresh_unavailable', 'Session refresh unavailable')
+      }
       this.clearAuth()
       this.redirectToAuth(this.getNextUrl())
       throw new ApiError('unauthorized', 'Unauthorized')
@@ -262,7 +274,10 @@ export class ComboxClient {
 
     if (response.status === 401 && !options?.noAuth) {
       const nextTokens = await this.refreshAuthTokens()
-      if (!nextTokens) {
+      if (nextTokens.kind !== 'ok') {
+        if (nextTokens.kind === 'unavailable') {
+          throw new ApiError('session_refresh_unavailable', 'Session refresh unavailable')
+        }
         this.clearAuth()
         this.redirectToAuth(this.getNextUrl())
         throw new ApiError('unauthorized', 'Unauthorized')
@@ -273,7 +288,7 @@ export class ComboxClient {
           Accept: 'application/json',
           ...(options?.body ? { 'Content-Type': 'application/json' } : {}),
           ...(options?.headers ?? {}),
-          Authorization: `Bearer ${nextTokens.access_token}`,
+          Authorization: `Bearer ${nextTokens.tokens.access_token}`,
         },
         cache: isGet ? 'no-store' : 'default',
         body: options?.body ? JSON.stringify(options.body) : undefined,
@@ -479,6 +494,7 @@ export class ComboxClient {
       avatar_data_url?: string | null
       avatar_gradient?: string | null
       comments_enabled?: boolean
+      reactions_enabled?: boolean
       is_public?: boolean
       public_slug?: string | null
     },
@@ -559,8 +575,8 @@ export class ComboxClient {
     return { chat: payload.chat }
   }
 
-  async createPublicChannel(input: { title: string; public_slug?: string; is_public?: boolean }): Promise<{ chat: ChatItem }> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/public-channels`, {
+  async createStandaloneChannel(input: { title: string; public_slug?: string; is_public?: boolean }): Promise<{ chat: ChatItem }> {
+    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/channels`, {
       method: 'POST',
       body: {
         title: input.title,
@@ -568,22 +584,112 @@ export class ComboxClient {
         is_public: input.is_public ?? true,
       },
     })
-    if (!payload.chat) throw new ApiError('create_public_channel_failed', 'Create public channel failed')
+    if (!payload.chat) throw new ApiError('create_standalone_channel_failed', 'Create standalone channel failed')
     return { chat: payload.chat }
+  }
+
+  async getStandaloneChannel(chatID: string): Promise<ChatItem> {
+    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/channels/${chatID}`)
+    if (!payload.chat) throw new ApiError('get_standalone_channel_failed', 'Get standalone channel failed')
+    return payload.chat
+  }
+
+  async updateStandaloneChannel(
+    chatID: string,
+    input: {
+      title?: string
+      avatar_data_url?: string | null
+      avatar_gradient?: string | null
+      comments_enabled?: boolean
+      reactions_enabled?: boolean
+      is_public?: boolean
+      public_slug?: string | null
+    },
+  ): Promise<{ chat: ChatItem }> {
+    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/channels/${chatID}`, {
+      method: 'PATCH',
+      body: input,
+    })
+    if (!payload.chat) throw new ApiError('update_standalone_channel_failed', 'Update standalone channel failed')
+    return { chat: payload.chat }
+  }
+
+  async subscribeChannel(chatID: string): Promise<{ chat: ChatItem }> {
+    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/channels/${chatID}/subscribe`, {
+      method: 'POST',
+    })
+    if (!payload.chat) throw new ApiError('subscribe_standalone_channel_failed', 'Subscribe standalone channel failed')
+    return { chat: payload.chat }
+  }
+
+  async unsubscribeChannel(chatID: string): Promise<void> {
+    await this.apiRequest(`/channels/${chatID}/unsubscribe`, {
+      method: 'POST',
+    })
+  }
+
+  async listChannelMembers(chatID: string, options?: { include_banned?: boolean }): Promise<ChatMember[]> {
+    const suffix = options?.include_banned ? '?include_banned=1' : ''
+    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/channels/${chatID}/members${suffix}`)
+    return Array.isArray(payload.items) ? payload.items : []
+  }
+
+  async updateChannelMemberRole(chatID: string, userID: string, role: 'subscriber' | 'admin' | 'banned'): Promise<ChatMember[]> {
+    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/channels/${chatID}/members/${userID}`, {
+      method: 'PATCH',
+      body: { role },
+    })
+    return Array.isArray(payload.items) ? payload.items : []
+  }
+
+  async removeChannelMember(chatID: string, userID: string): Promise<ChatMember[]> {
+    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/channels/${chatID}/members/${userID}`, {
+      method: 'DELETE',
+    })
+    return Array.isArray(payload.items) ? payload.items : []
+  }
+
+  async createPublicChannel(input: { title: string; public_slug?: string; is_public?: boolean }): Promise<{ chat: ChatItem }> {
+    return this.createStandaloneChannel(input)
+  }
+
+  async getPublicChannel(chatID: string): Promise<ChatItem> {
+    return this.getStandaloneChannel(chatID)
+  }
+
+  async updatePublicChannel(
+    chatID: string,
+    input: {
+      title?: string
+      avatar_data_url?: string | null
+      avatar_gradient?: string | null
+      comments_enabled?: boolean
+      reactions_enabled?: boolean
+      is_public?: boolean
+      public_slug?: string | null
+    },
+  ): Promise<{ chat: ChatItem }> {
+    return this.updateStandaloneChannel(chatID, input)
   }
 
   async subscribePublicChannel(chatID: string): Promise<{ chat: ChatItem }> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/public-channels/${chatID}/subscribe`, {
-      method: 'POST',
-    })
-    if (!payload.chat) throw new ApiError('subscribe_public_channel_failed', 'Subscribe public channel failed')
-    return { chat: payload.chat }
+    return this.subscribeChannel(chatID)
   }
 
   async unsubscribePublicChannel(chatID: string): Promise<void> {
-    await this.apiRequest(`/public-channels/${chatID}/unsubscribe`, {
-      method: 'POST',
-    })
+    return this.unsubscribeChannel(chatID)
+  }
+
+  async listPublicChannelMembers(chatID: string, options?: { include_banned?: boolean }): Promise<ChatMember[]> {
+    return this.listChannelMembers(chatID, options)
+  }
+
+  async updatePublicChannelMemberRole(chatID: string, userID: string, role: 'subscriber' | 'admin' | 'banned'): Promise<ChatMember[]> {
+    return this.updateChannelMemberRole(chatID, userID, role)
+  }
+
+  async removePublicChannelMember(chatID: string, userID: string): Promise<ChatMember[]> {
+    return this.removeChannelMember(chatID, userID)
   }
 
   async sendDirectMessage(input: {
