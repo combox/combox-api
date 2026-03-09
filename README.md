@@ -1,5 +1,7 @@
 # ComBox API SDK
 
+[![Code Quality](https://github.com/combox/combox-api/actions/workflows/security.yml/badge.svg)](https://github.com/combox/combox-api/actions/workflows/security.yml)
+
 [English](./README.md) | [Русский](./README.ru.md)
 
 TypeScript client library for ComBox frontend apps. It wraps backend HTTP endpoints, auth/session storage, realtime helpers, normalized model helpers, and message-content utilities.
