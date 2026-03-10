@@ -26,6 +26,7 @@ export type NotificationEvent = {
   type: string
   user_id: string
   kind: string
+  muted?: boolean
   payload: unknown
   created_at: string
 }

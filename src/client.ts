@@ -211,16 +211,23 @@ export class ComboxClient {
   private async refreshAuthTokens(): Promise<RefreshResult> {
     const snapshot = this.readAuthSnapshot()
     if (!snapshot?.tokens?.refresh_token) return { kind: 'missing' }
+    const usedRefreshToken = snapshot.tokens.refresh_token
 
     try {
       const response = await this.fetchImpl(this.authUrl('/auth/refresh'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ refresh_token: snapshot.tokens.refresh_token }),
+        body: JSON.stringify({ refresh_token: usedRefreshToken }),
       })
       const payload = await parseJson<{ tokens?: AuthTokens; message?: string; code?: string }>(response)
       if (!response.ok || !payload?.tokens) {
         if (response.status === 401 || response.status === 403) {
+          // Cross-tab safety: another tab may have refreshed (rotating refresh_token)
+          // while we were in-flight. In that case, use the latest snapshot and do not logout.
+          const current = this.readAuthSnapshot()
+          if (current?.tokens?.refresh_token && current.tokens.refresh_token !== usedRefreshToken && current.tokens.access_token) {
+            return { kind: 'ok', tokens: current.tokens }
+          }
           this.clearAuth()
           return { kind: 'invalid' }
         }
