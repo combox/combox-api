@@ -1,6 +1,6 @@
 # ComBox API SDK
 
-[![Code Quality](https://github.com/combox/combox-api/actions/workflows/security.yml/badge.svg)](https://github.com/combox/combox-api/actions/workflows/security.yml)
+[![Code Quality](https://github.com/combox/combox-api/actions/workflows/security.yml/badge.svg)](https://github.com/combox/combox-api/actions/workflows/security.yml) [![Socket Badge](https://badge.socket.dev/npm/package/combox-api)](https://badge.socket.dev/npm/package/combox-api)
 
 [English](./README.md) | [Русский](./README.ru.md)
 
