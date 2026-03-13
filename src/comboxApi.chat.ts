@@ -78,6 +78,10 @@ export async function leaveChat(chatID: string): Promise<void> {
   await apiRequest(`/chats/${encodeURIComponent(chatID)}/leave`, { method: 'POST' })
 }
 
+export async function deleteChat(chatID: string): Promise<void> {
+  await apiRequest(`/chats/${encodeURIComponent(chatID)}`, { method: 'DELETE' })
+}
+
 export async function updateChatMemberRole(chatID: string, userID: string, role: 'member' | 'moderator' | 'admin' | 'subscriber' | 'banned'): Promise<ChatMember[]> {
   const payload = await apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members/${userID}`, { method: 'PATCH', body: { role } })
   return Array.isArray(payload.items) ? payload.items : []
@@ -98,7 +102,7 @@ export async function createChannel(groupChatID: string, input: { title: string;
 }
 
 export async function createStandaloneChannel(input: { title: string; public_slug?: string; is_public?: boolean }): Promise<{ chat: ChatItem }> {
-  const payload = await apiRequest<{ chat?: ChatItem }>(`/channels`, {
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/standalone-channels`, {
     method: 'POST',
     body: { title: input.title, public_slug: input.public_slug, is_public: input.is_public ?? true },
   })
@@ -107,7 +111,7 @@ export async function createStandaloneChannel(input: { title: string; public_slu
 }
 
 export async function getStandaloneChannel(chatID: string): Promise<ChatItem> {
-  const payload = await apiRequest<{ chat?: ChatItem }>(`/channels/${chatID}`)
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/standalone-channels/${chatID}`)
   if (!payload.chat) throw new ApiError('get_standalone_channel_failed', 'Get standalone channel failed')
   return payload.chat
 }
@@ -121,45 +125,36 @@ export async function updateStandaloneChannel(chatID: string, input: {
   is_public?: boolean
   public_slug?: string | null
 }): Promise<{ chat: ChatItem }> {
-  const payload = await apiRequest<{ chat?: ChatItem }>(`/channels/${chatID}`, { method: 'PATCH', body: input })
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/standalone-channels/${chatID}`, { method: 'PATCH', body: input })
   if (!payload.chat) throw new ApiError('update_standalone_channel_failed', 'Update standalone channel failed')
   return { chat: payload.chat }
 }
 
 export async function subscribeChannel(chatID: string): Promise<{ chat: ChatItem }> {
-  const payload = await apiRequest<{ chat?: ChatItem }>(`/channels/${chatID}/subscribe`, { method: 'POST' })
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/standalone-channels/${chatID}/subscribe`, { method: 'POST' })
   if (!payload.chat) throw new ApiError('subscribe_standalone_channel_failed', 'Subscribe standalone channel failed')
   return { chat: payload.chat }
 }
 
 export async function unsubscribeChannel(chatID: string): Promise<void> {
-  await apiRequest(`/channels/${chatID}/unsubscribe`, { method: 'POST' })
+  await apiRequest(`/standalone-channels/${chatID}/unsubscribe`, { method: 'POST' })
 }
 
 export async function listChannelMembers(chatID: string, options?: { include_banned?: boolean }): Promise<ChatMember[]> {
   const suffix = options?.include_banned ? '?include_banned=1' : ''
-  const payload = await apiRequest<{ items?: ChatMember[] }>(`/channels/${chatID}/members${suffix}`)
+  const payload = await apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members${suffix}`)
   return Array.isArray(payload.items) ? payload.items : []
 }
 
 export async function updateChannelMemberRole(chatID: string, userID: string, role: 'subscriber' | 'admin' | 'banned'): Promise<ChatMember[]> {
-  const payload = await apiRequest<{ items?: ChatMember[] }>(`/channels/${chatID}/members/${userID}`, { method: 'PATCH', body: { role } })
+  const payload = await apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members/${userID}`, { method: 'PATCH', body: { role } })
   return Array.isArray(payload.items) ? payload.items : []
 }
 
 export async function removeChannelMember(chatID: string, userID: string): Promise<ChatMember[]> {
-  const payload = await apiRequest<{ items?: ChatMember[] }>(`/channels/${chatID}/members/${userID}`, { method: 'DELETE' })
+  const payload = await apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members/${userID}`, { method: 'DELETE' })
   return Array.isArray(payload.items) ? payload.items : []
 }
-
-export const createPublicChannel = createStandaloneChannel
-export const getPublicChannel = getStandaloneChannel
-export const updatePublicChannel = updateStandaloneChannel
-export const subscribePublicChannel = subscribeChannel
-export const unsubscribePublicChannel = unsubscribeChannel
-export const listPublicChannelMembers = listChannelMembers
-export const updatePublicChannelMemberRole = updateChannelMemberRole
-export const removePublicChannelMember = removeChannelMember
 
 export async function deleteChannel(groupChatID: string, channelChatID: string): Promise<void> {
   await apiRequest(`/chats/${groupChatID}/channels/${channelChatID}`, { method: 'DELETE' })
@@ -226,20 +221,65 @@ export async function addRecentGif(item: GIFItem): Promise<void> {
 }
 
 export async function listMessages(chatID: string, cursor = '', limit = 50): Promise<{ items: MessageItem[]; nextCursor: string }> {
-  const params = new URLSearchParams()
-  params.set('limit', String(limit))
-  if (cursor) params.set('cursor', cursor)
-  const payload = await apiRequest<{ items?: MessageItem[]; next_cursor?: string }>(`/chats/${chatID}/messages?${params.toString()}`)
-  return { items: Array.isArray(payload.items) ? payload.items : [], nextCursor: payload.next_cursor ?? '' }
+	const params = new URLSearchParams()
+	params.set('limit', String(limit))
+	if (cursor) params.set('cursor', cursor)
+	const payload = await apiRequest<{ items?: MessageItem[]; next_cursor?: string }>(`/chats/${chatID}/messages?${params.toString()}`)
+	return { items: Array.isArray(payload.items) ? payload.items : [], nextCursor: payload.next_cursor ?? '' }
+}
+
+export async function getStandaloneChannelThread(channelChatID: string, rootMessageID: string): Promise<{ thread_chat_id: string }> {
+	const channelID = String(channelChatID || '').trim()
+	const rootID = String(rootMessageID || '').trim()
+	const payload = await apiRequest<{ thread_chat_id?: string }>(`/standalone-channels/${channelID}/threads/${rootID}`)
+	if (!payload.thread_chat_id) throw new ApiError('get_thread_failed', 'Get thread failed')
+	return { thread_chat_id: payload.thread_chat_id }
+}
+
+export async function listStandaloneChannelThreadComments(
+	channelChatID: string,
+	rootMessageID: string,
+	options?: { cursor?: string; limit?: number },
+): Promise<{ thread_chat_id: string; items: MessageItem[]; next_cursor: string }> {
+	const channelID = String(channelChatID || '').trim()
+	const rootID = String(rootMessageID || '').trim()
+	const params = new URLSearchParams()
+	if (typeof options?.limit === 'number') params.set('limit', String(options.limit))
+	if (options?.cursor) params.set('cursor', options.cursor)
+	const suffix = params.toString() ? `?${params.toString()}` : ''
+	const payload = await apiRequest<{ thread_chat_id?: string; items?: MessageItem[]; next_cursor?: string }>(
+		`/standalone-channels/${channelID}/threads/${rootID}/comments${suffix}`,
+	)
+	if (!payload.thread_chat_id) throw new ApiError('list_comments_failed', 'List comments failed')
+	return {
+		thread_chat_id: payload.thread_chat_id,
+		items: Array.isArray(payload.items) ? payload.items : [],
+		next_cursor: payload.next_cursor ?? '',
+	}
+}
+
+export async function postStandaloneChannelThreadComment(
+	channelChatID: string,
+	rootMessageID: string,
+	input: { content: string; attachment_ids?: string[] },
+): Promise<{ item: MessageItem }> {
+	const channelID = String(channelChatID || '').trim()
+	const rootID = String(rootMessageID || '').trim()
+	const payload = await apiRequest<{ item?: MessageItem }>(`/standalone-channels/${channelID}/threads/${rootID}/comments`, {
+		method: 'POST',
+		body: { content: input.content, attachment_ids: input.attachment_ids ?? [] },
+	})
+	if (!payload.item) throw new ApiError('post_comment_failed', 'Post comment failed')
+	return { item: payload.item }
 }
 
 export async function sendMessage(chatID: string, content: string, attachmentIDs: string[] = [], replyToMessageID = ''): Promise<MessageItem> {
-  const payload = await apiRequest<{ item?: MessageItem; code?: string }>(`/chats/${chatID}/messages`, {
-    method: 'POST',
-    body: { content, attachment_ids: attachmentIDs, reply_to_message_id: replyToMessageID || undefined },
-  })
-  if (!payload.item) throw new Error(payload.code || 'send_failed')
-  return payload.item
+	const payload = await apiRequest<{ item?: MessageItem; code?: string }>(`/chats/${chatID}/messages`, {
+		method: 'POST',
+		body: { content, attachment_ids: attachmentIDs, reply_to_message_id: replyToMessageID || undefined },
+	})
+	if (!payload.item) throw new Error(payload.code || 'send_failed')
+	return payload.item
 }
 
 export async function deleteMessage(messageID: string): Promise<void> {
@@ -264,10 +304,8 @@ export async function upsertMessageStatus(chatID: string, messageID: string, sta
   return payload.status
 }
 
-export async function markMessageRead(messageID: string): Promise<MessageStatus> {
-  const payload = await apiRequest<{ status?: MessageStatus }>(`/messages/${messageID}/read`, { method: 'POST' })
-  if (!payload.status) throw new ApiError('request_failed', 'Status update failed')
-  return payload.status
+export async function markMessageRead(chatID: string, messageID: string): Promise<MessageStatus> {
+  return await upsertMessageStatus(chatID, messageID, 'read')
 }
 
 export async function toggleMessageReaction(messageID: string, emoji: string): Promise<{ action: string; reactions: MessageReaction[] }> {
