@@ -867,10 +867,8 @@ export class ComboxClient {
     return payload.status
   }
 
-  async markMessageRead(messageID: string): Promise<MessageStatus> {
-    const payload = await this.apiRequest<{ status?: MessageStatus }>(`/messages/${messageID}/read`, { method: 'POST' })
-    if (!payload.status) throw new ApiError('request_failed', 'Status update failed')
-    return payload.status
+  async markMessageRead(chatID: string, messageID: string): Promise<MessageStatus> {
+    return await this.upsertMessageStatus(chatID, messageID, 'read')
   }
 
   async toggleMessageReaction(messageID: string, emoji: string): Promise<{ action: string; reactions: MessageReaction[] }> {
