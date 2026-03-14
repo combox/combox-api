@@ -1,35 +1,32 @@
-import {
-  ApiError,
-  type AuthTokens,
-  type AuthUser,
-  type ChatItem,
-  type ChatInviteLink,
-  type ChatMember,
-  type LocalProfile,
-  type MediaAttachment,
-  type MediaSession,
-  type MessageItem,
-  type MessageReaction,
-  type MessageStatus,
-  type RegisterProfileInput,
-  type SearchResults,
-  type BotToken,
-  type BotWebhook,
-  type GIFItem,
-  type E2EDevice,
-  type E2EDeviceSummary,
-  type E2EEnvelope,
-  type E2EPreKeyBundle,
-  type E2EUserKeyBackup,
-  type ProfileUpdateInput,
-  type PresenceItem,
-  type ProfileSettings,
-  type ChatNotifications,
-  getAttachment as getAttachmentCached,
-  importAttachmentFromURL,
-  uploadAttachmentWithProgress,
-  uploadMediaSessionWithProgress,
-} from './comboxApi'
+import * as api from './comboxApi'
+import { ApiError } from './comboxApi.core'
+import type {
+  AuthTokens,
+  AuthUser,
+  ChatItem,
+  ChatInviteLink,
+  ChatMember,
+  MediaAttachment,
+  MediaSession,
+  MessageItem,
+  MessageReaction,
+  MessageStatus,
+  SearchResults,
+  BotToken,
+  BotWebhook,
+  GIFItem,
+  E2EDevice,
+  E2EDeviceSummary,
+  E2EEnvelope,
+  E2EPreKeyBundle,
+  E2EUserKeyBackup,
+  ProfileUpdateInput,
+  PresenceItem,
+  ProfileSettings,
+  ChatNotifications,
+} from './comboxApi.types'
+import type { LocalProfile } from './comboxApi.localProfile'
+import type { RegisterProfileInput } from './comboxApi.auth'
 import {
   createBrowserAuthStorage,
   createBrowserProfileStorage,
@@ -469,192 +466,52 @@ export class ComboxClient {
     return { verified: Boolean(payload?.verified), login_key: payload?.login_key }
   }
 
-  async listChats(): Promise<ChatItem[]> {
-    const payload = await this.apiRequest<{ items?: ChatItem[] }>('/chats')
-    return Array.isArray(payload.items) ? payload.items : []
-  }
+  async listChats(): Promise<ChatItem[]> { return api.listChats() }
 
-  async getChat(chatID: string): Promise<ChatItem> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/chats/${chatID}`)
-    if (!payload.chat) throw new ApiError('get_chat_failed', 'Get chat failed')
-    return payload.chat
-  }
+  async getChat(chatID: string): Promise<ChatItem> { return api.getChat(chatID) }
 
   async listChatsNormalized(): Promise<NormalizedChatItem[]> {
     const items = await this.listChats()
     return items.map(normalizeChatItem)
   }
 
-  async createChat(input: { title: string; member_ids: string[]; type?: string }): Promise<{ chat: ChatItem }> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/chats`, {
-      method: 'POST',
-      body: { title: input.title, member_ids: input.member_ids, type: input.type ?? 'standard' },
-    })
-    if (!payload.chat) throw new ApiError('create_chat_failed', 'Create chat failed')
-    return { chat: payload.chat }
-  }
+  async createChat(input: { title: string; member_ids: string[]; type?: string }): Promise<{ chat: ChatItem }> { return api.createChat(input) }
 
-  async updateChat(
-    chatID: string,
-    input: {
-      title?: string
-      avatar_data_url?: string | null
-      avatar_gradient?: string | null
-      comments_enabled?: boolean
-      reactions_enabled?: boolean
-      is_public?: boolean
-      public_slug?: string | null
-    },
-  ): Promise<{ chat: ChatItem }> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/chats/${chatID}`, {
-      method: 'PATCH',
-      body: input,
-    })
-    if (!payload.chat) throw new ApiError('update_chat_failed', 'Update chat failed')
-    return { chat: payload.chat }
-  }
+  async updateChat(chatID: string, input: Parameters<typeof api.updateChat>[1]): Promise<{ chat: ChatItem }> { return api.updateChat(chatID, input) }
 
-  async listChannels(groupChatID: string): Promise<ChatItem[]> {
-    const payload = await this.apiRequest<{ items?: ChatItem[] }>(`/chats/${groupChatID}/channels`)
-    return Array.isArray(payload.items) ? payload.items : []
-  }
+  async listChannels(groupChatID: string): Promise<ChatItem[]> { return api.listChannels(groupChatID) }
 
-  async listChatMembers(chatID: string, options?: { include_banned?: boolean }): Promise<ChatMember[]> {
-    const suffix = options?.include_banned ? '?include_banned=1' : ''
-    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members${suffix}`)
-    return Array.isArray(payload.items) ? payload.items : []
-  }
+  async listChatMembers(chatID: string, options?: { include_banned?: boolean }): Promise<ChatMember[]> { return api.listChatMembers(chatID, options) }
 
-  async addChatMembers(chatID: string, memberIDs: string[]): Promise<ChatMember[]> {
-    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members`, {
-      method: 'POST',
-      body: { member_ids: memberIDs },
-    })
-    return Array.isArray(payload.items) ? payload.items : []
-  }
+  async addChatMembers(chatID: string, memberIDs: string[]): Promise<ChatMember[]> { return api.addChatMembers(chatID, memberIDs) }
 
-  async updateChatMemberRole(chatID: string, userID: string, role: 'member' | 'moderator' | 'admin' | 'subscriber' | 'banned'): Promise<ChatMember[]> {
-    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members/${userID}`, {
-      method: 'PATCH',
-      body: { role },
-    })
-    return Array.isArray(payload.items) ? payload.items : []
-  }
+  async updateChatMemberRole(chatID: string, userID: string, role: 'member' | 'moderator' | 'admin' | 'subscriber' | 'banned'): Promise<ChatMember[]> { return api.updateChatMemberRole(chatID, userID, role) }
 
-  async removeChatMember(chatID: string, userID: string): Promise<ChatMember[]> {
-    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/chats/${chatID}/members/${userID}`, {
-      method: 'DELETE',
-    })
-    return Array.isArray(payload.items) ? payload.items : []
-  }
+  async removeChatMember(chatID: string, userID: string): Promise<ChatMember[]> { return api.removeChatMember(chatID, userID) }
 
-  async listChatInviteLinks(chatID: string): Promise<ChatInviteLink[]> {
-    const payload = await this.apiRequest<{ items?: ChatInviteLink[] }>(`/chats/${chatID}/invite-links`)
-    return Array.isArray(payload.items) ? payload.items : []
-  }
+  async listChatInviteLinks(chatID: string): Promise<ChatInviteLink[]> { return api.listChatInviteLinks(chatID) }
 
-  async createChatInviteLink(chatID: string, input?: { title?: string }): Promise<ChatInviteLink> {
-    const payload = await this.apiRequest<{ item?: ChatInviteLink }>(`/chats/${chatID}/invite-links`, {
-      method: 'POST',
-      body: { title: input?.title || '' },
-    })
-    if (!payload.item) throw new ApiError('create_invite_link_failed', 'Create invite link failed')
-    return payload.item
-  }
+  async createChatInviteLink(chatID: string, input?: { title?: string }): Promise<ChatInviteLink> { return api.createChatInviteLink(chatID, input) }
 
-  async acceptChannelInviteLink(token: string): Promise<{ chat: ChatItem }> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/chats/invite-links/${encodeURIComponent(token)}/accept`, {
-      method: 'POST',
-    })
-    if (!payload.chat) throw new ApiError('accept_invite_link_failed', 'Accept invite link failed')
-    return { chat: payload.chat }
-  }
+  async acceptChannelInviteLink(token: string): Promise<{ chat: ChatItem }> { return api.acceptChannelInviteLink(token) }
 
-  async createChannel(groupChatID: string, input: { title: string; channel_type?: 'text' | 'voice' }): Promise<{ chat: ChatItem }> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/chats/${groupChatID}/channels`, {
-      method: 'POST',
-      body: {
-        title: input.title,
-        channel_type: input.channel_type ?? 'text',
-      },
-    })
-    if (!payload.chat) throw new ApiError('create_channel_failed', 'Create channel failed')
-    return { chat: payload.chat }
-  }
+  async createChannel(groupChatID: string, input: { title: string; channel_type?: 'text' | 'voice' }): Promise<{ chat: ChatItem }> { return api.createChannel(groupChatID, input) }
 
-  async createStandaloneChannel(input: { title: string; public_slug?: string; is_public?: boolean }): Promise<{ chat: ChatItem }> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/channels`, {
-      method: 'POST',
-      body: {
-        title: input.title,
-        public_slug: input.public_slug,
-        is_public: input.is_public ?? true,
-      },
-    })
-    if (!payload.chat) throw new ApiError('create_standalone_channel_failed', 'Create standalone channel failed')
-    return { chat: payload.chat }
-  }
+  async createStandaloneChannel(input: { title: string; public_slug?: string; is_public?: boolean }): Promise<{ chat: ChatItem }> { return api.createStandaloneChannel(input) }
 
-  async getStandaloneChannel(chatID: string): Promise<ChatItem> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/channels/${chatID}`)
-    if (!payload.chat) throw new ApiError('get_standalone_channel_failed', 'Get standalone channel failed')
-    return payload.chat
-  }
+  async getStandaloneChannel(chatID: string): Promise<ChatItem> { return api.getStandaloneChannel(chatID) }
 
-  async updateStandaloneChannel(
-    chatID: string,
-    input: {
-      title?: string
-      avatar_data_url?: string | null
-      avatar_gradient?: string | null
-      comments_enabled?: boolean
-      reactions_enabled?: boolean
-      is_public?: boolean
-      public_slug?: string | null
-    },
-  ): Promise<{ chat: ChatItem }> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/channels/${chatID}`, {
-      method: 'PATCH',
-      body: input,
-    })
-    if (!payload.chat) throw new ApiError('update_standalone_channel_failed', 'Update standalone channel failed')
-    return { chat: payload.chat }
-  }
+  async updateStandaloneChannel(chatID: string, input: Parameters<typeof api.updateStandaloneChannel>[1]): Promise<{ chat: ChatItem }> { return api.updateStandaloneChannel(chatID, input) }
 
-  async subscribeChannel(chatID: string): Promise<{ chat: ChatItem }> {
-    const payload = await this.apiRequest<{ chat?: ChatItem }>(`/channels/${chatID}/subscribe`, {
-      method: 'POST',
-    })
-    if (!payload.chat) throw new ApiError('subscribe_standalone_channel_failed', 'Subscribe standalone channel failed')
-    return { chat: payload.chat }
-  }
+  async subscribeChannel(chatID: string): Promise<{ chat: ChatItem }> { return api.subscribeChannel(chatID) }
 
-  async unsubscribeChannel(chatID: string): Promise<void> {
-    await this.apiRequest(`/channels/${chatID}/unsubscribe`, {
-      method: 'POST',
-    })
-  }
+  async unsubscribeChannel(chatID: string): Promise<void> { return api.unsubscribeChannel(chatID) }
 
-  async listChannelMembers(chatID: string, options?: { include_banned?: boolean }): Promise<ChatMember[]> {
-    const suffix = options?.include_banned ? '?include_banned=1' : ''
-    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/channels/${chatID}/members${suffix}`)
-    return Array.isArray(payload.items) ? payload.items : []
-  }
+  async listChannelMembers(chatID: string, options?: { include_banned?: boolean }): Promise<ChatMember[]> { return api.listChannelMembers(chatID, options) }
 
-  async updateChannelMemberRole(chatID: string, userID: string, role: 'subscriber' | 'admin' | 'banned'): Promise<ChatMember[]> {
-    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/channels/${chatID}/members/${userID}`, {
-      method: 'PATCH',
-      body: { role },
-    })
-    return Array.isArray(payload.items) ? payload.items : []
-  }
+  async updateChannelMemberRole(chatID: string, userID: string, role: 'subscriber' | 'admin' | 'banned'): Promise<ChatMember[]> { return api.updateChannelMemberRole(chatID, userID, role) }
 
-  async removeChannelMember(chatID: string, userID: string): Promise<ChatMember[]> {
-    const payload = await this.apiRequest<{ items?: ChatMember[] }>(`/channels/${chatID}/members/${userID}`, {
-      method: 'DELETE',
-    })
-    return Array.isArray(payload.items) ? payload.items : []
-  }
+  async removeChannelMember(chatID: string, userID: string): Promise<ChatMember[]> { return api.removeChannelMember(chatID, userID) }
 
   async createPublicChannel(input: { title: string; public_slug?: string; is_public?: boolean }): Promise<{ chat: ChatItem }> {
     return this.createStandaloneChannel(input)
@@ -772,37 +629,30 @@ export class ComboxClient {
     })
   }
 
-  async listMessages(chatID: string, cursor = '', limit = 50, deviceID = ''): Promise<{ items: MessageItem[]; nextCursor: string }> {
+  async listMessages(chatID: string, cursor = '', limit = 50, deviceID = ''): Promise<{ items: MessageItem[]; statuses: MessageStatus[]; nextCursor: string }> {
     const params = new URLSearchParams()
     params.set('limit', String(limit))
     if (cursor) params.set('cursor', cursor)
-    const payload = await this.apiRequest<{ items?: MessageItem[]; next_cursor?: string }>(`/chats/${chatID}/messages?${params.toString()}`, {
+    const payload = await this.apiRequest<{ items?: MessageItem[]; statuses?: MessageStatus[]; next_cursor?: string }>(`/chats/${chatID}/messages?${params.toString()}`, {
       headers: deviceID ? { 'X-Device-ID': deviceID } : undefined,
     })
     return {
       items: Array.isArray(payload.items) ? payload.items : [],
+      statuses: api.normalizeMessageStatuses(payload.statuses, chatID),
       nextCursor: payload.next_cursor ?? '',
     }
   }
 
-  async listMessagesNormalized(chatID: string, cursor = '', limit = 50, deviceID = ''): Promise<{ items: NormalizedMessageItem[]; nextCursor: string }> {
+  async listMessagesNormalized(chatID: string, cursor = '', limit = 50, deviceID = ''): Promise<{ items: NormalizedMessageItem[]; statuses: MessageStatus[]; nextCursor: string }> {
     const payload = await this.listMessages(chatID, cursor, limit, deviceID)
     return {
       nextCursor: payload.nextCursor,
       items: payload.items.map(normalizeMessageItem),
+      statuses: payload.statuses,
     }
   }
 
-  async sendMessage(chatID: string, content: string, attachmentIDs: string[] = [], replyToMessageID = ''): Promise<MessageItem> {
-    const payload = await this.apiRequest<{ item?: MessageItem; code?: string }>(`/chats/${chatID}/messages`, {
-      method: 'POST',
-      body: { content, attachment_ids: attachmentIDs, reply_to_message_id: replyToMessageID || undefined },
-    })
-    if (!payload.item) {
-      throw new Error(payload.code || 'send_failed')
-    }
-    return payload.item
-  }
+  async sendMessage(chatID: string, content: string, attachmentIDs: string[] = [], replyToMessageID = ''): Promise<MessageItem> { return api.sendMessage(chatID, content, attachmentIDs, replyToMessageID) }
 
   async sendMessageE2E(input: {
     chatID: string
@@ -828,59 +678,19 @@ export class ComboxClient {
     return payload.item
   }
 
-  async deleteMessage(messageID: string): Promise<void> {
-    await this.apiRequest(`/messages/${messageID}`, { method: 'DELETE' })
-  }
+  async deleteMessage(messageID: string): Promise<void> { return api.deleteMessage(messageID) }
 
-  async editMessageByID(messageID: string, content: string, attachmentIDs: string[] = []): Promise<MessageItem> {
-    const payload = await this.apiRequest<{ item?: MessageItem }>(`/messages/${messageID}`, {
-      method: 'PATCH',
-      body: { content, attachment_ids: attachmentIDs },
-    })
-    if (!payload.item) throw new ApiError('update_failed', 'Update failed')
-    return payload.item
-  }
+  async editMessageByID(messageID: string, content: string, attachmentIDs: string[] = []): Promise<MessageItem> { return api.editMessageByID(messageID, content, attachmentIDs) }
 
-  async editMessage(chatID: string, messageID: string, content: string, attachmentIDs: string[] = []): Promise<MessageItem> {
-    const payload = await this.apiRequest<{ item?: MessageItem }>(`/chats/${chatID}/messages/${messageID}`, {
-      method: 'PATCH',
-      body: { content, attachment_ids: attachmentIDs },
-    })
-    if (!payload.item) throw new ApiError('update_failed', 'Update failed')
-    return payload.item
-  }
+  async editMessage(chatID: string, messageID: string, content: string, attachmentIDs: string[] = []): Promise<MessageItem> { return api.editMessage(chatID, messageID, content, attachmentIDs) }
 
-  async forwardMessage(chatID: string, sourceMessageID: string): Promise<MessageItem> {
-    const payload = await this.apiRequest<{ item?: MessageItem }>(`/chats/${chatID}/messages/${sourceMessageID}/forward`, {
-      method: 'POST',
-    })
-    if (!payload.item) throw new ApiError('send_failed', 'Forward failed')
-    return payload.item
-  }
+  async forwardMessage(chatID: string, sourceMessageID: string): Promise<MessageItem> { return api.forwardMessage(chatID, sourceMessageID) }
 
-  async upsertMessageStatus(chatID: string, messageID: string, status: string): Promise<MessageStatus> {
-    const payload = await this.apiRequest<{ status?: MessageStatus }>(`/chats/${chatID}/messages/${messageID}/status`, {
-      method: 'POST',
-      body: { status },
-    })
-    if (!payload.status) throw new ApiError('request_failed', 'Status update failed')
-    return payload.status
-  }
+  async upsertMessageStatus(chatID: string, messageID: string, status: 'delivered' | 'read'): Promise<MessageStatus> { return api.upsertMessageStatus(chatID, messageID, status) }
 
-  async markMessageRead(chatID: string, messageID: string): Promise<MessageStatus> {
-    return await this.upsertMessageStatus(chatID, messageID, 'read')
-  }
+  async markMessageRead(chatID: string, messageID: string): Promise<MessageStatus> { return api.markMessageRead(chatID, messageID) }
 
-  async toggleMessageReaction(messageID: string, emoji: string): Promise<{ action: string; reactions: MessageReaction[] }> {
-    const payload = await this.apiRequest<{ action?: string; reactions?: MessageReaction[] }>(`/messages/${messageID}/reactions`, {
-      method: 'POST',
-      body: { emoji },
-    })
-    return {
-      action: payload.action || 'set',
-      reactions: Array.isArray(payload.reactions) ? payload.reactions : [],
-    }
-  }
+  async toggleMessageReaction(messageID: string, emoji: string): Promise<{ action: string; reactions: MessageReaction[] }> { return api.toggleMessageReaction(messageID, emoji) }
 
   async logout(refreshToken: string): Promise<void> {
     await this.apiRequest(`/auth/logout`, { method: 'POST', body: { refresh_token: refreshToken }, noAuth: true })
@@ -1013,7 +823,7 @@ export class ComboxClient {
   }
 
   async getAttachment(attachmentID: string): Promise<{ attachment: MediaAttachment; url: string; preview_url?: string }> {
-    return getAttachmentCached(attachmentID)
+    return api.getAttachment(attachmentID)
   }
 
   async getAttachmentNormalized(attachmentID: string): Promise<{ attachment: NormalizedMediaAttachment; url: string; preview_url?: string }> {
@@ -1033,21 +843,21 @@ export class ComboxClient {
     source_url: string
     filename?: string
   }): Promise<{ attachment: MediaAttachment; url: string; preview_url?: string }> {
-    return importAttachmentFromURL(input)
+    return api.importAttachmentFromURL(input)
   }
 
   async uploadAttachmentWithProgress(
     file: File,
     onProgress?: (percent: number) => void,
   ): Promise<{ attachment: MediaAttachment; url: string; preview_url?: string }> {
-    return uploadAttachmentWithProgress(file, onProgress)
+    return api.uploadAttachmentWithProgress(file, onProgress)
   }
 
   async uploadMediaSessionWithProgress(
     file: File,
     onProgress?: (percent: number) => void,
   ): Promise<{ session: MediaSession; attachment: MediaAttachment; url: string; preview_url?: string }> {
-    return uploadMediaSessionWithProgress(file, onProgress)
+    return api.uploadMediaSessionWithProgress(file, onProgress)
   }
 
   async uploadFile(
@@ -1055,12 +865,12 @@ export class ComboxClient {
     onProgress?: (percent: number) => void,
   ): Promise<{ attachment: MediaAttachment; url: string; preview_url?: string; protocol: 'hls-session' | 'multipart-legacy' }> {
     try {
-      const uploaded = await uploadMediaSessionWithProgress(file, onProgress)
+      const uploaded = await this.uploadMediaSessionWithProgress(file, onProgress)
       return { attachment: uploaded.attachment, url: uploaded.url, preview_url: uploaded.preview_url, protocol: 'hls-session' }
     } catch (error) {
       if (!(error instanceof ApiError)) throw error
       if (!(error.code === 'not_found' || error.code === 'request_failed' || error.code === 'internal')) throw error
-      const uploaded = await uploadAttachmentWithProgress(file, onProgress)
+      const uploaded = await this.uploadAttachmentWithProgress(file, onProgress)
       return { attachment: uploaded.attachment, url: uploaded.url, preview_url: uploaded.preview_url, protocol: 'multipart-legacy' }
     }
   }
