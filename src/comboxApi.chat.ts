@@ -220,12 +220,38 @@ export async function addRecentGif(item: GIFItem): Promise<void> {
   })
 }
 
-export async function listMessages(chatID: string, cursor = '', limit = 50): Promise<{ items: MessageItem[]; nextCursor: string }> {
+export function normalizeMessageStatuses(statuses: MessageStatus[] | undefined, chatID = ''): MessageStatus[] {
+  if (!Array.isArray(statuses) || statuses.length === 0) return []
+  const normalized: MessageStatus[] = []
+  const seen = new Set<string>()
+  for (const status of statuses) {
+    if (!status || typeof status !== 'object') continue
+    const messageID = String(status.message_id || '').trim()
+    if (!messageID || seen.has(messageID)) continue
+    const normalizedStatus: MessageStatus = {
+      message_id: messageID,
+      chat_id: String(status.chat_id || chatID).trim(),
+      user_id: String(status.user_id || '').trim(),
+      status: String(status.status || '').trim().toLowerCase(),
+      updated_at: status.updated_at || new Date().toISOString(),
+    }
+    if (!normalizedStatus.status) continue
+    normalized.push(normalizedStatus)
+    seen.add(messageID)
+  }
+  return normalized
+}
+
+export async function listMessages(chatID: string, cursor = '', limit = 50): Promise<{ items: MessageItem[]; statuses: MessageStatus[]; nextCursor: string }> {
 	const params = new URLSearchParams()
 	params.set('limit', String(limit))
 	if (cursor) params.set('cursor', cursor)
-	const payload = await apiRequest<{ items?: MessageItem[]; next_cursor?: string }>(`/chats/${chatID}/messages?${params.toString()}`)
-	return { items: Array.isArray(payload.items) ? payload.items : [], nextCursor: payload.next_cursor ?? '' }
+	const payload = await apiRequest<{ items?: MessageItem[]; statuses?: MessageStatus[]; next_cursor?: string }>(`/chats/${chatID}/messages?${params.toString()}`)
+	return {
+		items: Array.isArray(payload.items) ? payload.items : [],
+		statuses: normalizeMessageStatuses(payload.statuses, chatID),
+		nextCursor: payload.next_cursor ?? '',
+	}
 }
 
 export async function getStandaloneChannelThread(channelChatID: string, rootMessageID: string): Promise<{ thread_chat_id: string }> {
@@ -280,6 +306,17 @@ export async function sendMessage(chatID: string, content: string, attachmentIDs
 	})
 	if (!payload.item) throw new Error(payload.code || 'send_failed')
 	return payload.item
+}
+
+export async function forwardMessage(chatID: string, sourceMessageID: string): Promise<MessageItem> {
+  const cleanChatID = String(chatID || '').trim()
+  const cleanSourceMessageID = String(sourceMessageID || '').trim()
+  if (!cleanChatID || !cleanSourceMessageID) throw new ApiError('forward_failed', 'Forward failed')
+  const payload = await apiRequest<{ item?: MessageItem }>(`/chats/${encodeURIComponent(cleanChatID)}/messages/${encodeURIComponent(cleanSourceMessageID)}/forward`, {
+    method: 'POST',
+  })
+  if (!payload.item) throw new ApiError('forward_failed', 'Forward failed')
+  return payload.item
 }
 
 export async function deleteMessage(messageID: string): Promise<void> {
