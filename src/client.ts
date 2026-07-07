@@ -139,7 +139,7 @@ export class ComboxClient {
     this.wsBase = config.wsBase ?? CLIENT_ENV?.VITE_WS_BASE_URL ?? inferDefaultWSBase()
     this.authStorage = config.authStorage ?? createBrowserAuthStorage()
     this.profileStorage = config.profileStorage ?? createBrowserProfileStorage()
-    this.fetchImpl = config.fetchImpl ?? fetch
+    this.fetchImpl = config.fetchImpl ?? fetch.bind(globalThis)
     this.redirectToAuth = config.redirectToAuth ?? ((next) => {
       if (typeof window === 'undefined') return
       if (window.location.pathname.startsWith('/auth')) return
