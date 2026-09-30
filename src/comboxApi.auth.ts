@@ -1,10 +1,10 @@
 import type { AuthTokens, AuthUser, ChatNotifications, ProfileSettings, ProfileUpdateInput } from './comboxApi.types'
-import { getLocalProfile, saveLocalProfile, type LocalProfile } from './comboxApi.localProfile'
+import { getLocalProfile, saveLocalProfile, clearLocalProfile, type LocalProfile } from './comboxApi.localProfile'
 import { ApiError, apiRequest, authUrl, getAccessToken, getOrRefreshToken, parseJson } from './comboxApi.core'
 import { clearStoredAuth, readAuthSnapshot, writeAuthSnapshot } from './comboxApi.session'
 
 export type { LocalProfile }
-export { getLocalProfile, saveLocalProfile }
+export { getLocalProfile, saveLocalProfile, clearLocalProfile }
 
 function updateStoredUser(user: AuthUser): void {
   const snapshot = readAuthSnapshot()
@@ -35,7 +35,10 @@ export function isAuthenticated(): boolean {
 }
 
 export function clearAuth(): void {
+  // Local logout: drop bearer credentials AND the cached profile PII
+  // together. The profile cache previously survived logout indefinitely.
   clearStoredAuth()
+  clearLocalProfile()
 }
 
 export async function login(loginValue: string, password: string, loginKey: string): Promise<{ user: AuthUser }> {

@@ -1,5 +1,6 @@
 import type { AuthTokens } from './comboxApi.types'
 import { clearStoredAuth, readAuthSnapshot, writeAuthSnapshot } from './comboxApi.session'
+import { clearLocalProfile } from './comboxApi.localProfile'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -120,6 +121,7 @@ async function refreshAuthTokens(): Promise<RefreshResult> {
           return { kind: 'ok', tokens: current.tokens }
         }
         clearStoredAuth()
+        clearLocalProfile()
         return { kind: 'invalid' }
       }
       return { kind: 'unavailable' }
@@ -159,6 +161,7 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
       throw new ApiError('session_refresh_unavailable', 'Session refresh unavailable')
     }
     clearStoredAuth()
+    clearLocalProfile()
     redirectToAuthIfNeeded()
     throw new ApiError('unauthorized', 'Unauthorized')
   }
@@ -185,6 +188,7 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
         throw new ApiError('session_refresh_unavailable', 'Session refresh unavailable')
       }
       clearStoredAuth()
+      clearLocalProfile()
       redirectToAuthIfNeeded()
       throw new ApiError('unauthorized', 'Unauthorized')
     }
@@ -202,6 +206,7 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
     if (!retry.ok) {
       if (retry.status === 401) {
         clearStoredAuth()
+        clearLocalProfile()
         redirectToAuthIfNeeded()
       }
       const errPayload = await parseJson<{ code?: string; message?: string; details?: Record<string, string> }>(retry)

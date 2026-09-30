@@ -194,7 +194,10 @@ export class ComboxClient {
   }
 
   clearAuth(): void {
+    // Local logout: drop bearer credentials AND the cached profile PII
+    // together (the profile cache previously survived logout indefinitely).
     this.authStorage.clear()
+    this.profileStorage.clear?.()
   }
 
   saveLocalProfile(profile: LocalProfile): void {
@@ -693,6 +696,10 @@ export class ComboxClient {
   async toggleMessageReaction(messageID: string, emoji: string): Promise<{ action: string; reactions: MessageReaction[] }> { return api.toggleMessageReaction(messageID, emoji) }
 
   async logout(refreshToken: string): Promise<void> {
+    // Server-side revocation only: it does NOT wipe local storage (a failed
+    // network call must not log the user out locally). Callers must invoke
+    // clearAuth() after a successful logout to drop tokens and cached
+    // profile PII from this tab. See the SECURITY note in `./storage`.
     await this.apiRequest(`/auth/logout`, { method: 'POST', body: { refresh_token: refreshToken }, noAuth: true })
   }
 

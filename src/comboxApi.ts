@@ -29,7 +29,7 @@ export type {
   MediaAttachment,
   MediaSession,
 } from './comboxApi.types'
-import { getLocalProfile, saveLocalProfile, type LocalProfile } from './comboxApi.localProfile'
+import { getLocalProfile, saveLocalProfile, clearLocalProfile, type LocalProfile } from './comboxApi.localProfile'
 import { ApiError, getAccessToken as getAccessTokenCore } from './comboxApi.core'
 export * from './comboxApi.auth'
 export * from './comboxApi.chat'
@@ -37,5 +37,5 @@ export * from './comboxApi.media'
 export * from './comboxApi.ws'
 
 export { ApiError, getAccessTokenCore as getAccessToken }
-export { getLocalProfile, saveLocalProfile }
+export { getLocalProfile, saveLocalProfile, clearLocalProfile }
 export type { LocalProfile }
