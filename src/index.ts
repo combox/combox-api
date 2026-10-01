@@ -1,4 +1,6 @@
 export * from './comboxApi'
+export * from './comboxApi.chatCalls'
+export * from './comboxApi.messagePins'
 export * from './messageContent'
 export * from './client'
 export * from './storage'

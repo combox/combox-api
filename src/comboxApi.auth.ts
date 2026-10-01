@@ -1,10 +1,10 @@
-import type { AuthTokens, AuthUser, ChatNotifications, ProfileSettings, ProfileUpdateInput } from './comboxApi.types'
-import { getLocalProfile, saveLocalProfile, type LocalProfile } from './comboxApi.localProfile'
+import type { AuthSession, AuthTokens, AuthUser, ChatNotifications, ProfileSettings, ProfileUpdateInput, SavedTrack } from './comboxApi.types'
+import { getLocalProfile, saveLocalProfile, clearLocalProfile, type LocalProfile } from './comboxApi.localProfile'
 import { ApiError, apiRequest, authUrl, getAccessToken, getOrRefreshToken, parseJson } from './comboxApi.core'
 import { clearStoredAuth, readAuthSnapshot, writeAuthSnapshot } from './comboxApi.session'
 
 export type { LocalProfile }
-export { getLocalProfile, saveLocalProfile }
+export { getLocalProfile, saveLocalProfile, clearLocalProfile }
 
 function updateStoredUser(user: AuthUser): void {
   const snapshot = readAuthSnapshot()
@@ -35,7 +35,10 @@ export function isAuthenticated(): boolean {
 }
 
 export function clearAuth(): void {
+  // Local logout: drop bearer credentials AND the cached profile PII
+  // together. The profile cache previously survived logout indefinitely.
   clearStoredAuth()
+  clearLocalProfile()
 }
 
 export async function login(loginValue: string, password: string, loginKey: string): Promise<{ user: AuthUser }> {
@@ -110,6 +113,10 @@ export async function updateProfile(input: ProfileUpdateInput): Promise<AuthUser
   if (!payload.user) throw new ApiError('request_failed', 'Profile update failed')
   updateStoredUser(payload.user)
   return payload.user
+}
+
+export async function updateSavedTracks(tracks: SavedTrack[]): Promise<AuthUser> {
+  return updateProfile({ saved_tracks: tracks })
 }
 
 export async function updateSessionIdleTTL(seconds: number | null): Promise<AuthUser> {
@@ -203,4 +210,169 @@ export async function verifyEmailCode(email: string, code: string, purpose: 'log
   const payload = await parseJson<{ verified?: boolean; login_key?: string; code?: string; message?: string; details?: Record<string, string> }>(response)
   if (!response.ok) throw new ApiError(payload?.code || 'request_failed', payload?.message || 'Request failed', payload?.details)
   return { verified: Boolean(payload?.verified), login_key: payload?.login_key }
+}
+
+// ---------------------------------------------------------------------------
+// Active sessions
+// ---------------------------------------------------------------------------
+
+/** Every still-valid session of the signed-in user, newest first. */
+export async function listAuthSessions(): Promise<AuthSession[]> {
+  const payload = await apiRequest<{ items?: AuthSession[] }>('/auth/sessions')
+  return Array.isArray(payload.items) ? payload.items : []
+}
+
+/**
+ * Revokes one session. The current session may be revoked too; revoking a
+ * session of somebody else (or an unknown id) fails with
+ * ApiError('not_found'). The refresh token of a revoked session stops working
+ * immediately.
+ */
+export async function revokeAuthSession(sessionID: string): Promise<void> {
+  await apiRequest(`/auth/sessions/${encodeURIComponent(sessionID)}`, { method: 'DELETE' })
+}
+
+/**
+ * Revokes every session except `keepSessionID`. Passing nothing keeps the
+ * session the current access token belongs to; passing an explicit id wins
+ * over that, and passing an empty string alongside a token without a session
+ * claim revokes them all.
+ *
+ * @returns how many sessions were revoked.
+ */
+export async function revokeOtherAuthSessions(keepSessionID?: string): Promise<number> {
+  const payload = await apiRequest<{ revoked?: number }>('/auth/sessions/revoke-others', {
+    method: 'POST',
+    body: keepSessionID ? { keep_session_id: keepSessionID } : {},
+  })
+  return typeof payload.revoked === 'number' ? payload.revoked : 0
+}
+
+// ---------------------------------------------------------------------------
+// Global user settings ("Notifications and Sounds" / "Data and Storage")
+// ---------------------------------------------------------------------------
+
+/**
+ * Every whitelisted toggle as the strings 'true' / 'false'. Keys the user
+ * never touched come back filled with their documented default:
+ * notifications_enabled=true, notification_previews=true, sounds_enabled=true,
+ * badge_enabled=true, voice_autoplay=false, media_autoplay=true,
+ * data_saver=false, auto_download_photos=true, auto_download_videos=false,
+ * auto_download_files=false, notifications_private/groups/channels/reactions=true,
+ * notification_preview_name/text=true, events_contact_joined/pinned=true,
+ * calls_accept=true, badge_include_muted/folders_count/count_messages=false,
+ * delete_account_ttl='6_months' (the only non-boolean key).
+ */
+export type UserSettingKey =
+  | 'notifications_enabled'
+  | 'notification_previews'
+  | 'sounds_enabled'
+  | 'badge_enabled'
+  | 'voice_autoplay'
+  | 'media_autoplay'
+  | 'data_saver'
+  | 'auto_download_photos'
+  | 'auto_download_videos'
+  | 'auto_download_files'
+  | 'notifications_private'
+  | 'notifications_groups'
+  | 'notifications_channels'
+  | 'notifications_reactions'
+  | 'notification_preview_name'
+  | 'notification_preview_text'
+  | 'events_contact_joined'
+  | 'events_pinned'
+  | 'calls_accept'
+  | 'badge_include_muted'
+  | 'badge_folders_count'
+  | 'badge_count_messages'
+  | 'delete_account_ttl'
+
+export const USER_SETTING_KEYS: readonly UserSettingKey[] = [
+  'notifications_enabled',
+  'notification_previews',
+  'sounds_enabled',
+  'badge_enabled',
+  'voice_autoplay',
+  'media_autoplay',
+  'data_saver',
+  'auto_download_photos',
+  'auto_download_videos',
+  'auto_download_files',
+  'notifications_private',
+  'notifications_groups',
+  'notifications_channels',
+  'notifications_reactions',
+  'notification_preview_name',
+  'notification_preview_text',
+  'events_contact_joined',
+  'events_pinned',
+  'calls_accept',
+  'badge_include_muted',
+  'badge_folders_count',
+  'badge_count_messages',
+  'delete_account_ttl',
+]
+
+/** Delete-account inactivity TTL. Storage only: nothing deletes automatically. */
+export type DeleteAccountTTL = '1_month' | '3_months' | '6_months' | '12_months'
+
+export const DELETE_ACCOUNT_TTL_VALUES: readonly DeleteAccountTTL[] = ['1_month', '3_months', '6_months', '12_months']
+
+export const USER_SETTING_DEFAULTS: Record<UserSettingKey, string> = {
+  notifications_enabled: 'true',
+  notification_previews: 'true',
+  sounds_enabled: 'true',
+  badge_enabled: 'true',
+  voice_autoplay: 'false',
+  media_autoplay: 'true',
+  data_saver: 'false',
+  auto_download_photos: 'true',
+  auto_download_videos: 'false',
+  auto_download_files: 'false',
+  notifications_private: 'true',
+  notifications_groups: 'true',
+  notifications_channels: 'true',
+  notifications_reactions: 'true',
+  notification_preview_name: 'true',
+  notification_preview_text: 'true',
+  events_contact_joined: 'true',
+  events_pinned: 'true',
+  calls_accept: 'true',
+  badge_include_muted: 'false',
+  badge_folders_count: 'false',
+  badge_count_messages: 'false',
+  delete_account_ttl: '6_months',
+}
+
+/** Partial patch: booleans for toggle keys, a DeleteAccountTTL for the TTL key. */
+export type UserSettingsPatch = Partial<Record<UserSettingKey, boolean | DeleteAccountTTL>>
+
+export function isUserSettingKey(key: string): key is UserSettingKey {
+  return (USER_SETTING_KEYS as readonly string[]).includes(key)
+}
+
+export async function getUserSettings(): Promise<Record<string, string>> {
+  const payload = await apiRequest<{ settings?: Record<string, string> }>('/profile/user-settings')
+  return payload.settings ?? {}
+}
+
+/**
+ * Applies a partial patch and returns every whitelisted key afterwards.
+ * Booleans are serialised as 'true' / 'false', the TTL string is passed
+ * through; keys outside the whitelist are rejected by the API with
+ * ApiError('invalid_argument').
+ */
+export async function updateUserSettings(patch: UserSettingsPatch): Promise<Record<string, string>> {
+  const settings: Record<string, string> = {}
+  for (const key of Object.keys(patch)) {
+    const value = (patch as Record<string, unknown>)[key]
+    if (typeof value === 'boolean') settings[key] = value ? 'true' : 'false'
+    else if (typeof value === 'string' && value.trim().length > 0) settings[key] = value.trim()
+  }
+  const payload = await apiRequest<{ settings?: Record<string, string> }>('/profile/user-settings', {
+    method: 'PUT',
+    body: { settings },
+  })
+  return payload.settings ?? {}
 }

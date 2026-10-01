@@ -1,5 +1,5 @@
 import { clearAuth } from './comboxApi.auth'
-import { getAccessToken, getOrRefreshToken, redirectToAuthIfNeeded, WS_BASE } from './comboxApi.core'
+import { getAccessToken, getOrRefreshTokenDetailed, redirectToAuthIfNeeded, WS_BASE } from './comboxApi.core'
 
 function resolveWsBase(): URL {
   return WS_BASE
@@ -17,10 +17,14 @@ export function buildWsUrl(deviceID?: string): string {
 }
 
 export async function buildWsUrlWithFreshToken(deviceID?: string, forceRefresh = false): Promise<string> {
-  const token = await getOrRefreshToken(forceRefresh)
+  const { token, outcome } = await getOrRefreshTokenDetailed(forceRefresh)
   if (!token) {
-    clearAuth()
-    redirectToAuthIfNeeded()
+    // Only a genuinely dead session logs out. A transient outage (server restart,
+    // IP change, offline) must keep the stored refresh token so the next attempt succeeds.
+    if (outcome !== 'unavailable') {
+      clearAuth()
+      redirectToAuthIfNeeded()
+    }
     return ''
   }
 

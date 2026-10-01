@@ -1,8 +1,11 @@
 import * as api from './comboxApi'
 import { ApiError } from './comboxApi.core'
 import type {
+  AuthSession,
   AuthTokens,
   AuthUser,
+  ChatEvent,
+  ChatFolder,
   ChatItem,
   ChatInviteLink,
   ChatMember,
@@ -194,7 +197,10 @@ export class ComboxClient {
   }
 
   clearAuth(): void {
+    // Local logout: drop bearer credentials AND the cached profile PII
+    // together (the profile cache previously survived logout indefinitely).
     this.authStorage.clear()
+    this.profileStorage.clear?.()
   }
 
   saveLocalProfile(profile: LocalProfile): void {
@@ -240,15 +246,25 @@ export class ComboxClient {
   }
 
   private async getOrRefreshToken(forceRefresh = false): Promise<string | null> {
+    return (await this.getOrRefreshTokenDetailed(forceRefresh)).token
+  }
+
+  private async getOrRefreshTokenDetailed(
+    forceRefresh = false,
+  ): Promise<{ token: string | null; outcome: 'ok' | 'missing' | 'invalid' | 'unavailable' }> {
     const accessToken = this.getAccessToken()
-    if (!forceRefresh && accessToken && !isTokenExpiredOrNearExpiry(accessToken)) return accessToken
+    if (!forceRefresh && accessToken && !isTokenExpiredOrNearExpiry(accessToken)) {
+      return { token: accessToken, outcome: 'ok' }
+    }
     if (!this.refreshPromise) {
       this.refreshPromise = this.refreshAuthTokens().finally(() => {
         this.refreshPromise = null
       })
     }
     const refreshed = await this.refreshPromise
-    return refreshed.kind === 'ok' ? refreshed.tokens.access_token : null
+    return refreshed.kind === 'ok'
+      ? { token: refreshed.tokens.access_token, outcome: 'ok' }
+      : { token: null, outcome: refreshed.kind }
   }
 
   private async apiRequest<T>(path: string, options?: ApiRequestOptions): Promise<T> {
@@ -475,9 +491,21 @@ export class ComboxClient {
     return items.map(normalizeChatItem)
   }
 
-  async createChat(input: { title: string; member_ids: string[]; type?: string }): Promise<{ chat: ChatItem }> { return api.createChat(input) }
+  async createChat(input: { title: string; member_ids: string[]; type?: string; kind?: 'group' | 'direct' }): Promise<{ chat: ChatItem }> { return api.createChat(input) }
 
   async updateChat(chatID: string, input: Parameters<typeof api.updateChat>[1]): Promise<{ chat: ChatItem }> { return api.updateChat(chatID, input) }
+
+  async listChatEvents(chatID: string, options?: { limit?: number }): Promise<ChatEvent[]> { return api.listChatEvents(chatID, options) }
+
+  async listChatFolders(): Promise<ChatFolder[]> { return api.listChatFolders() }
+
+  async createChatFolder(input: { name: string; icon?: string; chat_ids?: string[] }): Promise<ChatFolder> { return api.createChatFolder(input) }
+
+  async updateChatFolder(folderID: string, input: { name?: string; icon?: string; position?: number }): Promise<ChatFolder> { return api.updateChatFolder(folderID, input) }
+
+  async setChatFolderChats(folderID: string, chatIDs: string[]): Promise<ChatFolder> { return api.setChatFolderChats(folderID, chatIDs) }
+
+  async deleteChatFolder(folderID: string): Promise<void> { return api.deleteChatFolder(folderID) }
 
   async listChannels(groupChatID: string): Promise<ChatItem[]> { return api.listChannels(groupChatID) }
 
@@ -523,15 +551,7 @@ export class ComboxClient {
 
   async updatePublicChannel(
     chatID: string,
-    input: {
-      title?: string
-      avatar_data_url?: string | null
-      avatar_gradient?: string | null
-      comments_enabled?: boolean
-      reactions_enabled?: boolean
-      is_public?: boolean
-      public_slug?: string | null
-    },
+    input: Parameters<typeof api.updateStandaloneChannel>[1],
   ): Promise<{ chat: ChatItem }> {
     return this.updateStandaloneChannel(chatID, input)
   }
@@ -693,8 +713,18 @@ export class ComboxClient {
   async toggleMessageReaction(messageID: string, emoji: string): Promise<{ action: string; reactions: MessageReaction[] }> { return api.toggleMessageReaction(messageID, emoji) }
 
   async logout(refreshToken: string): Promise<void> {
+    // Server-side revocation only: it does NOT wipe local storage (a failed
+    // network call must not log the user out locally). Callers must invoke
+    // clearAuth() after a successful logout to drop tokens and cached
+    // profile PII from this tab. See the SECURITY note in `./storage`.
     await this.apiRequest(`/auth/logout`, { method: 'POST', body: { refresh_token: refreshToken }, noAuth: true })
   }
+
+  async listAuthSessions(): Promise<AuthSession[]> { return api.listAuthSessions() }
+
+  async revokeAuthSession(sessionID: string): Promise<void> { return api.revokeAuthSession(sessionID) }
+
+  async revokeOtherAuthSessions(keepSessionID?: string): Promise<number> { return api.revokeOtherAuthSessions(keepSessionID) }
 
   async createBotToken(input: { name?: string; scopes: string[]; chat_ids: string[]; expires_at?: string }): Promise<BotToken> {
     const payload = await this.apiRequest<{ token?: BotToken }>(`/bot/tokens`, {
@@ -809,6 +839,10 @@ export class ComboxClient {
     return payload.chat_notifications ?? { muted_chat_ids: [], unread_by_chat: {} }
   }
 
+  async getUserSettings(): Promise<Record<string, string>> { return api.getUserSettings() }
+
+  async updateUserSettings(patch: Partial<Record<string, boolean>>): Promise<Record<string, string>> { return api.updateUserSettings(patch) }
+
   async setChatMuted(chatID: string, muted: boolean): Promise<ChatNotifications> {
     const payload = await this.apiRequest<{ chat_notifications?: ChatNotifications }>(`/profile/settings`, {
       method: 'PATCH',
@@ -887,10 +921,13 @@ export class ComboxClient {
   }
 
   async buildWsUrlWithFreshToken(deviceID?: string, forceRefresh = false): Promise<string> {
-    const token = await this.getOrRefreshToken(forceRefresh)
+    const { token, outcome } = await this.getOrRefreshTokenDetailed(forceRefresh)
     if (!token) {
-      this.clearAuth()
-      this.redirectToAuth(this.getNextUrl())
+      // `unavailable` = transient outage (server restart / IP change): keep the session.
+      if (outcome !== 'unavailable') {
+        this.clearAuth()
+        this.redirectToAuth(this.getNextUrl())
+      }
       return ''
     }
 

@@ -1,4 +1,4 @@
-import type { ChatInviteLink, ChatItem, ChatMember, GIFItem, MessageItem, MessageReaction, MessageStatus, SearchResults } from './comboxApi.types'
+import type { ChatEvent, ChatFolder, ChatInviteLink, ChatItem, ChatMember, GIFItem, MessageItem, MessageReaction, MessageStatus, SearchResults } from './comboxApi.types'
 import { ApiError, apiRequest } from './comboxApi.core'
 
 export async function listChats(): Promise<ChatItem[]> {
@@ -12,10 +12,10 @@ export async function getChat(chatID: string): Promise<ChatItem> {
   return payload.chat
 }
 
-export async function createChat(input: { title: string; member_ids: string[]; type?: string }): Promise<{ chat: ChatItem }> {
+export async function createChat(input: { title: string; member_ids: string[]; type?: string; kind?: 'group' | 'direct' }): Promise<{ chat: ChatItem }> {
   const payload = await apiRequest<{ chat?: ChatItem }>(`/chats`, {
     method: 'POST',
-    body: { title: input.title, member_ids: input.member_ids, type: input.type ?? 'standard' },
+    body: { title: input.title, member_ids: input.member_ids, type: input.type ?? 'standard', kind: input.kind },
   })
   if (!payload.chat) throw new ApiError('create_chat_failed', 'Create chat failed')
   return { chat: payload.chat }
@@ -27,12 +27,33 @@ export async function updateChat(chatID: string, input: {
   avatar_gradient?: string | null
   comments_enabled?: boolean
   reactions_enabled?: boolean
+  sign_messages?: boolean
+  show_authors_profiles?: boolean
+  auto_translate?: boolean
+  slow_mode_seconds?: number
+  /** Linked discussion chat; pass '' to clear the link. */
+  discussion_chat_id?: string
   is_public?: boolean
   public_slug?: string | null
+  send_permission?: 'all' | 'admins'
+  /** Free text, max 255 runes. Absent or null leaves it unchanged, '' clears it. */
+  description?: string | null
+  /** Chat icon emoji, max 8 runes. Absent or null leaves it unchanged, '' clears it. */
+  icon_emoji?: string | null
+  /** 'text' or 'voice'. Absent or null (or '') keeps the current type. */
+  channel_type?: 'text' | 'voice' | null
 }): Promise<{ chat: ChatItem }> {
   const payload = await apiRequest<{ chat?: ChatItem }>(`/chats/${chatID}`, { method: 'PATCH', body: input })
   if (!payload.chat) throw new ApiError('update_chat_failed', 'Update chat failed')
   return { chat: payload.chat }
+}
+
+export async function listChatEvents(chatID: string, options?: { limit?: number }): Promise<ChatEvent[]> {
+  const params = new URLSearchParams()
+  if (typeof options?.limit === 'number') params.set('limit', String(options.limit))
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  const payload = await apiRequest<{ items?: ChatEvent[] }>(`/chats/${chatID}/events${suffix}`)
+  return Array.isArray(payload.items) ? payload.items : []
 }
 
 export async function listChatInviteLinks(chatID: string): Promise<ChatInviteLink[]> {
@@ -78,8 +99,31 @@ export async function leaveChat(chatID: string): Promise<void> {
   await apiRequest(`/chats/${encodeURIComponent(chatID)}/leave`, { method: 'POST' })
 }
 
-export async function deleteChat(chatID: string): Promise<void> {
-  await apiRequest(`/chats/${encodeURIComponent(chatID)}`, { method: 'DELETE' })
+export async function deleteChat(chatID: string, options?: { forEveryone?: boolean }): Promise<void> {
+  const suffix = options?.forEveryone ? '?for_everyone=1' : ''
+  await apiRequest(`/chats/${encodeURIComponent(chatID)}${suffix}`, { method: 'DELETE' })
+}
+
+export async function setChatArchived(chatID: string, archived: boolean): Promise<ChatItem> {
+  const action = archived ? 'archive' : 'unarchive'
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/chats/${encodeURIComponent(chatID)}/${action}`, { method: 'POST' })
+  if (!payload.chat) throw new ApiError('archive_chat_failed', 'Archive chat failed')
+  return payload.chat
+}
+
+export async function setChatPinned(chatID: string, pinned: boolean, options?: { scope?: string; order?: number }): Promise<ChatItem> {
+  const action = pinned ? 'pin' : 'unpin'
+  const body =
+    options && (options.scope !== undefined || options.order !== undefined)
+      ? { scope: options.scope, order: options.order }
+      : undefined
+  const payload = await apiRequest<{ chat?: ChatItem }>(`/chats/${encodeURIComponent(chatID)}/${action}`, { method: 'POST', body })
+  if (!payload.chat) throw new ApiError('pin_chat_failed', 'Pin chat failed')
+  return payload.chat
+}
+
+export async function markChatAsRead(chatID: string): Promise<void> {
+  await apiRequest(`/chats/${encodeURIComponent(chatID)}/read`, { method: 'POST' })
 }
 
 export async function updateChatMemberRole(chatID: string, userID: string, role: 'member' | 'moderator' | 'admin' | 'subscriber' | 'banned'): Promise<ChatMember[]> {
@@ -122,8 +166,20 @@ export async function updateStandaloneChannel(chatID: string, input: {
   avatar_gradient?: string | null
   comments_enabled?: boolean
   reactions_enabled?: boolean
+  sign_messages?: boolean
+  show_authors_profiles?: boolean
+  auto_translate?: boolean
+  slow_mode_seconds?: number
+  /** Linked discussion chat; pass '' to clear the link. */
+  discussion_chat_id?: string
   is_public?: boolean
   public_slug?: string | null
+  /** Free text, max 255 runes. Absent or null leaves it unchanged, '' clears it. */
+  description?: string | null
+  /** Chat icon emoji, max 8 runes. Absent or null leaves it unchanged, '' clears it. */
+  icon_emoji?: string | null
+  /** 'text' or 'voice'. Absent or null (or '') keeps the current type. */
+  channel_type?: 'text' | 'voice' | null
 }): Promise<{ chat: ChatItem }> {
   const payload = await apiRequest<{ chat?: ChatItem }>(`/standalone-channels/${chatID}`, { method: 'PATCH', body: input })
   if (!payload.chat) throw new ApiError('update_standalone_channel_failed', 'Update standalone channel failed')
@@ -348,4 +404,65 @@ export async function markMessageRead(chatID: string, messageID: string): Promis
 export async function toggleMessageReaction(messageID: string, emoji: string): Promise<{ action: string; reactions: MessageReaction[] }> {
   const payload = await apiRequest<{ action?: string; reactions?: MessageReaction[] }>(`/messages/${messageID}/reactions`, { method: 'POST', body: { emoji } })
   return { action: payload.action || 'set', reactions: Array.isArray(payload.reactions) ? payload.reactions : [] }
+}
+
+// ---------------------------------------------------------------------------
+// Chat folders (the "Folders" dialog filters)
+// ---------------------------------------------------------------------------
+
+/** Every folder of the signed-in user, ordered for display. */
+export async function listChatFolders(): Promise<ChatFolder[]> {
+  const payload = await apiRequest<{ items?: ChatFolder[] }>('/chat-folders')
+  return Array.isArray(payload.items) ? payload.items : []
+}
+
+/**
+ * Creates a folder at the end of the list. `icon` is an optional glyph of at
+ * most 8 characters, `chat_ids` are chats the user belongs to (at most 1000).
+ * Fails with ApiError('already_exists') when the name is taken and with
+ * ApiError('invalid_argument') when the 12 folder limit is reached.
+ */
+export async function createChatFolder(input: { name: string; icon?: string; chat_ids?: string[] }): Promise<ChatFolder> {
+  const payload = await apiRequest<{ item?: ChatFolder }>('/chat-folders', {
+    method: 'POST',
+    body: { name: input.name, icon: input.icon ?? '', chat_ids: input.chat_ids ?? [] },
+  })
+  if (!payload.item) throw new ApiError('create_chat_folder_failed', 'Create chat folder failed')
+  return payload.item
+}
+
+/**
+ * Applies a partial patch: only the fields present in `input` change. Omit a
+ * field (or pass `undefined`) to leave it untouched. `position` moves the
+ * folder and renumbers the rest of the list.
+ */
+export async function updateChatFolder(
+  folderID: string,
+  input: { name?: string; icon?: string; position?: number },
+): Promise<ChatFolder> {
+  const body: { name?: string; icon?: string; position?: number } = {}
+  if (typeof input.name === 'string') body.name = input.name
+  if (typeof input.icon === 'string') body.icon = input.icon
+  if (typeof input.position === 'number') body.position = input.position
+  const payload = await apiRequest<{ item?: ChatFolder }>(`/chat-folder/${encodeURIComponent(folderID)}`, {
+    method: 'PATCH',
+    body,
+  })
+  if (!payload.item) throw new ApiError('update_chat_folder_failed', 'Update chat folder failed')
+  return payload.item
+}
+
+/** Replaces the whole chat set of a folder; `chatIDs` order is preserved. */
+export async function setChatFolderChats(folderID: string, chatIDs: string[]): Promise<ChatFolder> {
+  const payload = await apiRequest<{ item?: ChatFolder }>(`/chat-folder/${encodeURIComponent(folderID)}/chats`, {
+    method: 'PUT',
+    body: { chat_ids: chatIDs },
+  })
+  if (!payload.item) throw new ApiError('update_chat_folder_failed', 'Update chat folder failed')
+  return payload.item
+}
+
+/** Removes a folder; the chat links are dropped with it. */
+export async function deleteChatFolder(folderID: string): Promise<void> {
+  await apiRequest(`/chat-folder/${encodeURIComponent(folderID)}`, { method: 'DELETE' })
 }

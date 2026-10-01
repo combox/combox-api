@@ -18,6 +18,7 @@ export type MediaAttachment = {
   width?: number
   height?: number
   duration_ms?: number
+  user_meta?: Record<string, unknown>
   bucket: string
   object_key: string
   upload_type: string

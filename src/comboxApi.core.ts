@@ -1,5 +1,6 @@
 import type { AuthTokens } from './comboxApi.types'
 import { clearStoredAuth, readAuthSnapshot, writeAuthSnapshot } from './comboxApi.session'
+import { clearLocalProfile } from './comboxApi.localProfile'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -120,6 +121,7 @@ async function refreshAuthTokens(): Promise<RefreshResult> {
           return { kind: 'ok', tokens: current.tokens }
         }
         clearStoredAuth()
+        clearLocalProfile()
         return { kind: 'invalid' }
       }
       return { kind: 'unavailable' }
@@ -134,19 +136,39 @@ async function refreshAuthTokens(): Promise<RefreshResult> {
 }
 
 export async function getOrRefreshToken(forceRefresh = false): Promise<string | null> {
+  return (await getOrRefreshTokenDetailed(forceRefresh)).token
+}
+
+export type TokenRefreshOutcome = 'ok' | 'missing' | 'invalid' | 'unavailable'
+
+/**
+ * Resolves a usable access token together with the reason it may be missing.
+ *
+ * `unavailable` means the network/server was unreachable (deploy, restart, IP
+ * change, offline laptop) — the stored session must be kept, the caller should
+ * retry later instead of logging the user out.
+ * `missing` / `invalid` mean there is no session left to restore, a logout is safe.
+ */
+export async function getOrRefreshTokenDetailed(
+  forceRefresh = false,
+): Promise<{ token: string | null; outcome: TokenRefreshOutcome }> {
   const accessToken = getAccessToken()
-  if (!forceRefresh && accessToken && !isTokenExpiredOrNearExpiry(accessToken)) return accessToken
+  if (!forceRefresh && accessToken && !isTokenExpiredOrNearExpiry(accessToken)) {
+    return { token: accessToken, outcome: 'ok' }
+  }
   if (!refreshPromise) {
     refreshPromise = refreshAuthTokens().finally(() => {
       refreshPromise = null
     })
   }
   const refreshed = await refreshPromise
-  return refreshed.kind === 'ok' ? refreshed.tokens.access_token : null
+  return refreshed.kind === 'ok'
+    ? { token: refreshed.tokens.access_token, outcome: 'ok' }
+    : { token: null, outcome: refreshed.kind }
 }
 
 export type ApiRequestOptions = {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
   body?: unknown
   noAuth?: boolean
   headers?: Record<string, string>
@@ -159,6 +181,7 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
       throw new ApiError('session_refresh_unavailable', 'Session refresh unavailable')
     }
     clearStoredAuth()
+    clearLocalProfile()
     redirectToAuthIfNeeded()
     throw new ApiError('unauthorized', 'Unauthorized')
   }
@@ -185,6 +208,7 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
         throw new ApiError('session_refresh_unavailable', 'Session refresh unavailable')
       }
       clearStoredAuth()
+      clearLocalProfile()
       redirectToAuthIfNeeded()
       throw new ApiError('unauthorized', 'Unauthorized')
     }
@@ -202,6 +226,7 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
     if (!retry.ok) {
       if (retry.status === 401) {
         clearStoredAuth()
+        clearLocalProfile()
         redirectToAuthIfNeeded()
       }
       const errPayload = await parseJson<{ code?: string; message?: string; details?: Record<string, string> }>(retry)

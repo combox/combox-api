@@ -13,6 +13,15 @@ type AttachmentLookupPayload = {
 const attachmentCacheByID = new Map<string, { expiresAt: number; value: AttachmentLookupPayload }>()
 const attachmentInFlightByID = new Map<string, Promise<AttachmentLookupPayload>>()
 
+/** Drops cached lookups so a fresh read picks up server side changes (e.g. user_meta). */
+export function invalidateAttachmentCache(attachmentID?: string): void {
+  if (attachmentID) {
+    attachmentCacheByID.delete(attachmentID)
+    return
+  }
+  attachmentCacheByID.clear()
+}
+
 const SUPPORTED_STREAM_MIMES = new Set([
   'video/mp4',
   'video/quicktime',
@@ -39,10 +48,17 @@ const SUPPORTED_STREAM_MIMES = new Set([
   'application/ogg',
 ])
 
+/** `video/webm;codecs=vp9,opus` → `video/webm` (codec params are not part of the type match). */
+function normalizeMime(raw: string): string {
+  const value = (raw || '').toLowerCase().trim()
+  const semi = value.indexOf(';')
+  return semi >= 0 ? value.slice(0, semi).trim() : value
+}
+
 function detectAttachmentKind(file: File): 'image' | 'video' | 'audio' | 'file' {
-  const mime = (file.type || '').toLowerCase()
+  const mime = normalizeMime(file.type)
   const name = (file.name || '').toLowerCase()
-  if (file.type.startsWith('image/')) return 'image'
+  if (mime.startsWith('image/')) return 'image'
   if ((mime.startsWith('video/') || mime.startsWith('audio/') || mime === 'application/ogg') && SUPPORTED_STREAM_MIMES.has(mime)) {
     if (mime.startsWith('video/')) return 'video'
     return 'audio'
