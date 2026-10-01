@@ -128,6 +128,17 @@ async function parseJson<T>(response: Response): Promise<T | null> {
   }
 }
 
+// Shared single-flight across ALL ComboxClient instances. Navigation fires a
+// burst of requests through different instances (SettingsPage, workspace,
+// presence, realtime, ...); a per-instance promise would still send N
+// parallel POST /auth/refresh with the same rotated refresh_token => first
+// wins, the rest get 401 invalid_refresh_token => random logout. One global
+// inflight refresh fixes the race for the single-session browser app. It is
+// keyed by the used refresh token so two different sessions never share one
+// network call.
+let sharedRefreshPromise: Promise<RefreshResult> | null = null
+let sharedRefreshToken: string | null = null
+
 export class ComboxClient {
   private readonly baseUrl: string
   private readonly wsBase: string
@@ -135,7 +146,6 @@ export class ComboxClient {
   private readonly profileStorage: ProfileStorage
   private readonly fetchImpl: typeof fetch
   private readonly redirectToAuth: (nextUrl: string) => void
-  private refreshPromise: Promise<RefreshResult> | null = null
 
   constructor(config: ComboxClientConfig = {}) {
     this.baseUrl = config.baseUrl ?? CLIENT_ENV?.VITE_API_BASE_URL ?? inferDefaultAPIBase()
@@ -256,12 +266,34 @@ export class ComboxClient {
     if (!forceRefresh && accessToken && !isTokenExpiredOrNearExpiry(accessToken)) {
       return { token: accessToken, outcome: 'ok' }
     }
-    if (!this.refreshPromise) {
-      this.refreshPromise = this.refreshAuthTokens().finally(() => {
-        this.refreshPromise = null
+    const wantedRefreshToken = this.readAuthSnapshot()?.tokens?.refresh_token ?? null
+    if (sharedRefreshPromise && sharedRefreshToken && wantedRefreshToken) {
+      if (sharedRefreshToken === wantedRefreshToken) {
+        const shared = await sharedRefreshPromise
+        return shared.kind === 'ok'
+          ? { token: shared.tokens.access_token, outcome: 'ok' }
+          : { token: null, outcome: shared.kind }
+      }
+      // A different session is refreshing: never mix their tokens, refresh alone.
+      const own = await this.refreshAuthTokens()
+      return own.kind === 'ok'
+        ? { token: own.tokens.access_token, outcome: 'ok' }
+        : { token: null, outcome: own.kind }
+    }
+    if (!sharedRefreshPromise) {
+      const owner = this
+      sharedRefreshToken = wantedRefreshToken
+      const started = owner.refreshAuthTokens()
+      sharedRefreshPromise = started
+      void started.finally(() => {
+        // Clear only our own slot: a newer rotation may already wait below.
+        if (sharedRefreshPromise === started) {
+          sharedRefreshPromise = null
+          sharedRefreshToken = null
+        }
       })
     }
-    const refreshed = await this.refreshPromise
+    const refreshed = await sharedRefreshPromise
     return refreshed.kind === 'ok'
       ? { token: refreshed.tokens.access_token, outcome: 'ok' }
       : { token: null, outcome: refreshed.kind }
@@ -293,9 +325,26 @@ export class ComboxClient {
     })
 
     if (response.status === 401 && !options?.noAuth) {
-      const nextTokens = await this.refreshAuthTokens()
-      if (nextTokens.kind !== 'ok') {
-        if (nextTokens.kind === 'unavailable') {
+      // Single-flight: join the one shared refresh (backend rotates the
+      // refresh token with immediate invalidation of the old value, so N
+      // parallel refreshes => first wins, rest 401 => random logout). Retry
+      // the original request exactly once. Logout ONLY on an explicit
+      // 401/403 from /auth/refresh; a 401 from the retried resource or a
+      // network error never logs out.
+      const failedToken = token
+      const currentAccess = this.getAccessToken()
+      let fresh: string | null
+      let outcome: 'ok' | 'missing' | 'invalid' | 'unavailable'
+      if (currentAccess && currentAccess !== failedToken && !isTokenExpiredOrNearExpiry(currentAccess)) {
+        fresh = currentAccess
+        outcome = 'ok'
+      } else {
+        const detailed = await this.getOrRefreshTokenDetailed(true)
+        fresh = detailed.token
+        outcome = detailed.outcome
+      }
+      if (!fresh) {
+        if (outcome === 'unavailable') {
           throw new ApiError('session_refresh_unavailable', 'Session refresh unavailable')
         }
         this.clearAuth()
@@ -308,16 +357,12 @@ export class ComboxClient {
           Accept: 'application/json',
           ...(options?.body ? { 'Content-Type': 'application/json' } : {}),
           ...(options?.headers ?? {}),
-          Authorization: `Bearer ${nextTokens.tokens.access_token}`,
+          Authorization: `Bearer ${fresh}`,
         },
         cache: isGet ? 'no-store' : 'default',
         body: options?.body ? JSON.stringify(options.body) : undefined,
       })
       if (!retry.ok) {
-        if (retry.status === 401) {
-          this.clearAuth()
-          this.redirectToAuth(this.getNextUrl())
-        }
         const errPayload = await parseJson<{ code?: string; message?: string; details?: Record<string, string> }>(retry)
         throw new ApiError(errPayload?.code || 'request_failed', errPayload?.message || 'Request failed', errPayload?.details)
       }

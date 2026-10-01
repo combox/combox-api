@@ -202,9 +202,31 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
   })
 
   if (response.status === 401 && !options?.noAuth) {
-    const nextTokens = await refreshAuthTokens()
-    if (nextTokens.kind !== 'ok') {
-      if (nextTokens.kind === 'unavailable') {
+    // Single-flight: a navigation burst fires N parallel requests with the
+    // same stale access token; all get 401 here. The backend rotates the
+    // refresh token on every Refresh (old value is invalidated immediately,
+    // no reuse window), so N parallel refreshes => first wins, the rest get
+    // 401 invalid_refresh_token => random logout. Join one shared refresh via
+    // getOrRefreshTokenDetailed(true) instead of calling refreshAuthTokens()
+    // directly. Retry the original request exactly once. Logout ONLY on an
+    // explicit 401/403 from /auth/refresh (missing/invalid); network errors
+    // (unavailable) and a 401 from the retried resource never log out.
+    const failedToken = token
+    const currentAccess = getAccessToken()
+    let fresh: string | null
+    let outcome: TokenRefreshOutcome
+    if (currentAccess && currentAccess !== failedToken && !isTokenExpiredOrNearExpiry(currentAccess)) {
+      // Another in-flight request already refreshed while we were failing.
+      // Reuse it without forcing a second rotation.
+      fresh = currentAccess
+      outcome = 'ok'
+    } else {
+      const detailed = await getOrRefreshTokenDetailed(true)
+      fresh = detailed.token
+      outcome = detailed.outcome
+    }
+    if (!fresh) {
+      if (outcome === 'unavailable') {
         throw new ApiError('session_refresh_unavailable', 'Session refresh unavailable')
       }
       clearStoredAuth()
@@ -218,17 +240,12 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
         Accept: 'application/json',
         ...(options?.body ? { 'Content-Type': 'application/json' } : {}),
         ...(options?.headers ?? {}),
-        Authorization: `Bearer ${nextTokens.tokens.access_token}`,
+        Authorization: `Bearer ${fresh}`,
       },
       cache: isGet ? 'no-store' : 'default',
       body: options?.body ? JSON.stringify(options.body) : undefined,
     })
     if (!retry.ok) {
-      if (retry.status === 401) {
-        clearStoredAuth()
-        clearLocalProfile()
-        redirectToAuthIfNeeded()
-      }
       const errPayload = await parseJson<{ code?: string; message?: string; details?: Record<string, string> }>(retry)
       throw new ApiError(errPayload?.code || 'request_failed', errPayload?.message || 'Request failed', errPayload?.details)
     }

@@ -50,6 +50,7 @@ export * from './legacyAuth'
 export * from './translate'
 export * from './profileExtra'
 export * from './privacyExtra'
+export * from './reports'
 
 export { ApiError, getAccessTokenCore as getAccessToken }
 export { getLocalProfile, saveLocalProfile, clearLocalProfile }
